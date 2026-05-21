@@ -1,0 +1,139 @@
+/**
+ * @file tokens.css
+ * @description Design tokens — clean professional theme.
+ *
+ * Palette: white surfaces, slate neutrals, blue accent.
+ * No warm tones. No heavy shadows. Flat, minimal, readable.
+ */
+
+:root {
+  /* ── Ink (text) ──────────────────────────────────────────────────────── */
+  --nl-color-ink-primary:   #0f172a;   /* slate-900 */
+  --nl-color-ink-secondary: #334155;   /* slate-700 */
+  --nl-color-ink-tertiary:  #64748b;   /* slate-500 */
+  --nl-color-ink-disabled:  #94a3b8;   /* slate-400 */
+
+  /* ── Paper (surfaces) ────────────────────────────────────────────────── */
+  --nl-color-paper-base:    #ffffff;
+  --nl-color-paper-raised:  #f8fafc;   /* slate-50 */
+  --nl-color-paper-sunken:  #f1f5f9;   /* slate-100 */
+  --nl-color-paper-bg:      #e2e8f0;   /* slate-200 — page background */
+
+  /* ── Accent (professional blue) ──────────────────────────────────────── */
+  --nl-color-accent-primary: #2563eb;  /* blue-600 */
+  --nl-color-accent-hover:   #1d4ed8;  /* blue-700 */
+  --nl-color-accent-subtle:  #eff6ff;  /* blue-50 */
+  --nl-color-accent-border:  #bfdbfe;  /* blue-200 */
+
+  /* ── Info / cloud (same blue family) ────────────────────────────────── */
+  --nl-color-blue-primary: #2563eb;
+  --nl-color-blue-hover:   #1d4ed8;
+  --nl-color-blue-subtle:  #eff6ff;
+  --nl-color-blue-border:  #bfdbfe;
+
+  /* ── Semantic ────────────────────────────────────────────────────────── */
+  --nl-color-danger:        #dc2626;   /* red-600 */
+  --nl-color-danger-subtle: #fef2f2;
+  --nl-color-warning:       #d97706;   /* amber-600 */
+  --nl-color-success:       #059669;   /* emerald-600 */
+
+  /* ── Note type accent bars + tint backgrounds ────────────────────────── */
+
+  /* action → blue */
+  --nl-color-note-action-bar:  #2563eb;
+  --nl-color-note-action-bg:   #f8fbff;
+  --nl-color-note-action-text: #1e40af;
+
+  /* decision → emerald */
+  --nl-color-note-decision-bar:  #059669;
+  --nl-color-note-decision-bg:   #f0fdf4;
+  --nl-color-note-decision-text: #065f46;
+
+  /* insight → violet */
+  --nl-color-note-insight-bar:  #7c3aed;
+  --nl-color-note-insight-bg:   #faf5ff;
+  --nl-color-note-insight-text: #4c1d95;
+
+  /* summary → slate */
+  --nl-color-note-summary-bar:  #64748b;
+  --nl-color-note-summary-bg:   #f8fafc;
+  --nl-color-note-summary-text: #334155;
+
+  /* Badge compat tokens */
+  --nl-color-badge-action-bg:     var(--nl-color-note-action-bg);
+  --nl-color-badge-action-text:   var(--nl-color-note-action-text);
+  --nl-color-badge-decision-bg:   var(--nl-color-note-decision-bg);
+  --nl-color-badge-decision-text: var(--nl-color-note-decision-text);
+  --nl-color-badge-insight-bg:    var(--nl-color-note-insight-bg);
+  --nl-color-badge-insight-text:  var(--nl-color-note-insight-text);
+  --nl-color-badge-summary-bg:    var(--nl-color-paper-sunken);
+  --nl-color-badge-summary-text:  var(--nl-color-ink-tertiary);
+
+  /* ── Borders ─────────────────────────────────────────────────────────── */
+  --nl-border-subtle:  #e2e8f0;   /* slate-200 */
+  --nl-border-default: #cbd5e1;   /* slate-300 */
+  --nl-border-strong:  #94a3b8;   /* slate-400 */
+
+  /* ── Spacing (4px grid) ──────────────────────────────────────────────── */
+  --nl-space-1:   4px;
+  --nl-space-2:   8px;
+  --nl-space-3:  12px;
+  --nl-space-4:  16px;
+  --nl-space-5:  20px;
+  --nl-space-6:  24px;
+  --nl-space-8:  32px;
+  --nl-space-10: 40px;
+  --nl-space-12: 48px;
+  --nl-space-16: 64px;
+
+  /* ── Radius ──────────────────────────────────────────────────────────── */
+  --nl-radius-sm:   4px;
+  --nl-radius-md:   8px;
+  --nl-radius-lg:  10px;
+  --nl-radius-xl:  14px;
+  --nl-radius-full: 9999px;
+
+  /* ── Typography ──────────────────────────────────────────────────────── */
+  --nl-font-mono:  'DM Mono', 'Fira Code', monospace;
+  --nl-font-serif: 'Fraunces', 'Georgia', serif;
+  --nl-font-sans:  -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  --nl-text-xs:   10px;
+  --nl-text-sm:   11px;
+  --nl-text-base: 13px;
+  --nl-text-md:   14px;
+  --nl-text-lg:   16px;
+  --nl-text-xl:   20px;
+  --nl-text-2xl:  24px;
+
+  --nl-leading-tight:  1.35;
+  --nl-leading-normal: 1.65;
+  --nl-leading-loose:  1.85;
+
+  /* ── Transitions ─────────────────────────────────────────────────────── */
+  --nl-transition-fast:   100ms ease;
+  --nl-transition-normal: 150ms ease;
+  --nl-transition-slow:   250ms ease;
+
+  /* ── Shadows — minimal / flat ────────────────────────────────────────── */
+  --nl-shadow-sm:  0 1px 2px rgba(15,23,42,0.05);
+  --nl-shadow-md:  0 1px 4px rgba(15,23,42,0.06), 0 0 0 1px rgba(15,23,42,0.03);
+  --nl-shadow-lg:  0 4px 12px rgba(15,23,42,0.07), 0 0 0 1px rgba(15,23,42,0.04);
+
+  /* ── Z-index ─────────────────────────────────────────────────────────── */
+  --nl-z-base:    0;
+  --nl-z-raised:  10;
+  --nl-z-overlay: 100;
+  --nl-z-modal:   200;
+  --nl-z-toast:   300;
+
+  /* ── Dark navigation sidebar ─────────────────────────────────────────── */
+  --nl-sidebar-bg:          #0f172a;   /* slate-900 */
+  --nl-sidebar-bg-hover:    rgba(255,255,255,0.05);
+  --nl-sidebar-bg-active:   rgba(59,130,246,0.14);  /* blue tint */
+  --nl-sidebar-border:      rgba(255,255,255,0.07);
+  --nl-sidebar-text:        #cbd5e1;   /* slate-300 */
+  --nl-sidebar-text-muted:  #475569;   /* slate-600 */
+  --nl-sidebar-text-active: #93c5fd;   /* blue-300 */
+  --nl-sidebar-accent:      #2563eb;   /* blue-600 */
+}

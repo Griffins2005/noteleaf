@@ -1,0 +1,60 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# .dockerignore
+#
+# Excludes files and directories from the Docker build context.
+# A tight .dockerignore is essential for fast builds:
+#   - Without it, node_modules (~400MB) and .next (~1GB) are sent to the
+#     Docker daemon on every `docker build`, even if they're not needed.
+#   - With it, only source files (~5MB) are sent, making builds 10x faster.
+#
+# Rule: include the minimum needed to build the app.
+# Everything not explicitly needed by a COPY instruction can be excluded.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Dependencies (will be reinstalled inside Docker) ─────────────────────────
+**/node_modules/
+**/.npm/
+
+# ── Build outputs (will be rebuilt inside Docker) ────────────────────────────
+**/.next/
+**/dist/
+**/out/
+**/.turbo/
+
+# ── Environment files (injected via docker-compose.yml, never baked in) ──────
+**/.env
+**/.env.local
+**/.env.*.local
+**/.env.development
+**/.env.production
+
+# ── Version control ───────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ── Editor and OS artifacts ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Test artifacts ────────────────────────────────────────────────────────────
+**/coverage/
+**/__snapshots__/
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── Docker files themselves ───────────────────────────────────────────────────
+# Excluded to prevent accidental context pollution; Docker already has them.
+Dockerfile
+docker-compose.yml
+docker-compose.*.yml
+.dockerignore
+
+# ── Documentation ─────────────────────────────────────────────────────────────
+README.md
+docs/

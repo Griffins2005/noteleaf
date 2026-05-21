@@ -1,0 +1,215 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Noteleaf — Docker Compose
+#
+# Services:
+#   postgres  → PostgreSQL 16. Persistent volume for data.
+#   migrate   → One-shot Prisma migration runner. Exits after running migrations.
+#               Prevents api from starting until migrations are complete.
+#   api       → Fastify API server. Starts after migrate completes successfully.
+#   web       → Next.js frontend. Starts after api is healthy.
+#
+# Startup order (enforced via depends_on + conditions):
+#   postgres healthy → migrate completes → api healthy → web starts
+#
+# Quick start:
+#   1. cp apps/api/.env.example apps/api/.env        (fill in API keys)
+#   2. cp apps/web/.env.example apps/web/.env.local  (optional, defaults work)
+#   3. docker compose up --build
+#
+# Access:
+#   Web:    http://localhost:3003
+#   API:    http://localhost:3002
+#   Health: http://localhost:3002/api/health
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+
+    # Name the container for readable logs and docker exec commands.
+    container_name: noteleaf-postgres
+
+    # Restart on crash — not on explicit `docker compose stop`.
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-noteleaf}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-noteleaf_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-noteleaf}
+      # Performance tuning for a single-tenant dev/small-prod setup.
+      # These are conservative values — tune based on your server's RAM.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.utf8"
+
+    ports:
+      # Expose Postgres to the host for local development tools (Prisma Studio,
+      # psql, TablePlus, etc.). Remove in production if direct DB access is unneeded.
+      - "${POSTGRES_PORT:-5433}:5432"
+
+    volumes:
+      # Named volume — data persists across `docker compose down` and restarts.
+      # Destroyed only by `docker compose down --volumes` or `docker volume rm`.
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      # pg_isready checks that Postgres is accepting connections on the correct
+      # database and user — more reliable than a TCP port check.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-noteleaf} -d ${POSTGRES_DB:-noteleaf}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+    networks:
+      - noteleaf-internal
+
+  # ── Database migrations (one-shot) ──────────────────────────────────────────
+
+  migrate:
+    # Reuse the API image — it has Prisma and the compiled schema.
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: noteleaf-migrate
+
+    # Override the default CMD to run migrations instead of starting the server.
+    command: ["sh", "scripts/migrate.sh"]
+
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-noteleaf}:${POSTGRES_PASSWORD:-noteleaf_dev_password}@postgres:5432/${POSTGRES_DB:-noteleaf}
+
+    volumes:
+      # Mount the scripts directory so migrate.sh is accessible.
+      # Note: this requires the script to exist in the built image's working directory.
+      # The API Dockerfile COPY instruction handles this.
+      - ./apps/api/scripts:/app/apps/api/scripts:ro
+
+    depends_on:
+      postgres:
+        # Only run migrations once Postgres is healthy (accepting connections).
+        condition: service_healthy
+
+    # Do not restart — this is a one-shot service.
+    # restart: "no" is the default but stated explicitly for clarity.
+    restart: "no"
+
+    networks:
+      - noteleaf-internal
+
+  # ── Fastify API ─────────────────────────────────────────────────────────────
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: noteleaf-api
+
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 3001
+
+      # Database — uses Docker internal DNS (service name: postgres).
+      DATABASE_URL: postgresql://${POSTGRES_USER:-noteleaf}:${POSTGRES_PASSWORD:-noteleaf_dev_password}@postgres:5432/${POSTGRES_DB:-noteleaf}
+
+      # External API keys — must be set in .env or shell environment.
+      NVIDIA_STT_MODE:      ${NVIDIA_STT_MODE:-cloud}
+      NVIDIA_API_KEY:       ${NVIDIA_API_KEY:?NVIDIA_API_KEY must be set — get it free at build.nvidia.com}
+      NVIDIA_FUNCTION_ID:   ${NVIDIA_FUNCTION_ID:-bb0837de-8c7b-481f-9ec8-ef5663e9c1fa}
+      NVIDIA_NIM_HOST:      ${NVIDIA_NIM_HOST:-localhost}
+      NVIDIA_NIM_GRPC_PORT: ${NVIDIA_NIM_GRPC_PORT:-50051}
+
+      # Email (Resend) — get a free key at https://resend.com
+      RESEND_API_KEY:   ${RESEND_API_KEY:-}
+      FROM_EMAIL:       ${FROM_EMAIL:-Noteleaf <onboarding@resend.dev>}
+
+      # CORS — allow requests from the Next.js container and localhost dev.
+      # Add your production domain here when deploying.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3003,http://web:3000}
+
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-100}
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-60000}
+
+    ports:
+      # Expose API to the host so the browser can connect to the WebSocket
+      # directly (ws://localhost:3002/api/stt/stream). Next.js rewrites only
+      # proxy HTTP — WebSockets require a direct connection.
+      - "${API_PORT:-3002}:3001"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        # The API must not start until migrations have completed successfully.
+        # If migrate exits with code 1 (migration failed), api will not start.
+        condition: service_completed_successfully
+
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3001/api/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    networks:
+      - noteleaf-internal
+
+  # ── Next.js Web ─────────────────────────────────────────────────────────────
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # NEXT_PUBLIC_* are baked into the client JS bundle — must use the
+        # browser-reachable host port (localhost:3002 / localhost:3003).
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3002}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3003}
+        # API_INTERNAL_URL is baked into the server-side rewrite manifest.
+        # Inside Docker the API is reachable via Docker DNS, not localhost.
+        API_INTERNAL_URL: http://api:3001
+    container_name: noteleaf-web
+
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 3000
+      # Server-side rewrite target — uses Docker internal DNS so Next.js can
+      # reach the API container without going through the published host port.
+      API_INTERNAL_URL: http://api:3001
+      # Passed through so next.config.ts can fall back to it when not in Docker.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3002}
+
+    ports:
+      - "${WEB_PORT:-3003}:3000"
+
+    depends_on:
+      api:
+        # Web starts only after the API is healthy — prevents the frontend
+        # from loading before API routes are available.
+        condition: service_healthy
+
+    networks:
+      - noteleaf-internal
+
+# ── Volumes ────────────────────────────────────────────────────────────────────
+
+volumes:
+  # Named volume for Postgres data. Survives `docker compose down`.
+  # To wipe data completely: docker compose down --volumes
+  postgres_data:
+    name: noteleaf_postgres_data
+
+# ── Networks ───────────────────────────────────────────────────────────────────
+
+networks:
+  # Bridge network for inter-service communication.
+  # Services reference each other by service name (e.g. postgres, api, web).
+  # Only ports explicitly published in `ports:` are accessible from the host.
+  noteleaf-internal:
+    name: noteleaf-internal
+    driver: bridge

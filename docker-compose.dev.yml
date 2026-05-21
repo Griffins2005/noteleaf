@@ -1,0 +1,76 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Noteleaf — Docker Compose Development Override
+#
+# Extends docker-compose.yml for local development:
+#   - Replaces production images with dev-mode commands (tsx watch, next dev).
+#   - Mounts source files as volumes for live reload without rebuilding images.
+#   - Exposes additional debugging ports.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Or add to your shell profile for convenience:
+#   alias ndev='docker compose -f docker-compose.yml -f docker-compose.dev.yml up'
+#
+# Why a separate override file instead of modifying docker-compose.yml:
+#   docker-compose.yml is the production specification — it should be deployable
+#   as-is. This override file is layered on top only in development, keeping
+#   production config clean and explicit.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── API (dev mode) ───────────────────────────────────────────────────────────
+
+  api:
+    # Override the production CMD with tsx watch for TypeScript hot reload.
+    # tsx watch re-runs the server on any .ts file change in src/.
+    command: ["npx", "tsx", "watch", "src/server.ts"]
+
+    environment:
+      NODE_ENV: development
+
+    volumes:
+      # Mount source files — changes reflect immediately without rebuild.
+      - ./apps/api/src:/app/apps/api/src:ro
+      - ./packages/shared-types/src:/app/packages/shared-types/src:ro
+      # Mount .env file for local secrets (API keys, etc.)
+      - ./apps/api/.env:/app/apps/api/.env:ro
+
+    # Expose the Prisma Studio port for database inspection in development.
+    ports:
+      - "3001:3001"
+      - "5555:5555"   # Prisma Studio: cd apps/api && npx prisma studio
+
+  # ── Web (dev mode) ───────────────────────────────────────────────────────────
+
+  web:
+    # Override with Next.js dev server for HMR (Hot Module Replacement).
+    command: ["npx", "next", "dev", "--port", "3000"]
+
+    environment:
+      NODE_ENV: development
+
+    volumes:
+      # Mount source files for HMR.
+      - ./apps/web/src:/app/apps/web/src:ro
+      - ./apps/web/public:/app/apps/web/public:ro
+      - ./packages/shared-types/src:/app/packages/shared-types/src:ro
+      # Mount local .env.local for dev overrides.
+      - ./apps/web/.env.local:/app/apps/web/.env.local:ro
+
+    ports:
+      - "3000:3000"
+
+  # ── Postgres (dev: expose for local tools) ────────────────────────────────
+
+  postgres:
+    # In dev, expose Postgres on the host for DBeaver, TablePlus, psql, etc.
+    # Production compose already exposes 5432 — this is a no-op override,
+    # kept here to make the dev intent explicit.
+    ports:
+      - "5432:5432"
+
+    environment:
+      # Use simpler dev credentials — fine for local only.
+      POSTGRES_PASSWORD: devpassword

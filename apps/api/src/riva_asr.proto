@@ -1,0 +1,165 @@
+// Copyright 2022 NVIDIA Corporation.
+// NVIDIA Riva ASR proto — used to generate the Node.js gRPC client at runtime.
+// Source: https://github.com/nvidia-riva/api-clients/blob/main/protos/riva_asr.proto
+//
+// This file is used by @grpc/proto-loader in nvidia.stt.service.ts.
+// It is NOT compiled ahead of time — proto-loader loads it dynamically.
+
+syntax = "proto3";
+
+package nvidia.riva.asr;
+
+option cc_enable_arenas = true;
+option java_package = "com.nvidia.riva.asr";
+option java_outer_classname = "RivaAudioToTextProto";
+
+// ─── Service definition ───────────────────────────────────────────────────────
+
+service RivaSpeechRecognition {
+  // Offline: send the full audio, receive one complete transcript.
+  rpc Recognize(RecognizeRequest) returns (RecognizeResponse);
+
+  // Streaming: send audio chunks, receive interim and final transcripts.
+  // This is the method used by Noteleaf for real-time transcription.
+  rpc StreamingRecognize(stream StreamingRecognizeRequest)
+      returns (stream StreamingRecognizeResponse);
+}
+
+// ─── Audio encoding ───────────────────────────────────────────────────────────
+
+enum AudioEncoding {
+  // Not specified — invalid.
+  ENCODING_UNSPECIFIED = 0;
+  // 16-bit signed little-endian PCM (LINEAR16). This is what MediaRecorder
+  // produces when we request audio/webm;codecs=opus and convert on the server.
+  LINEAR_PCM = 1;
+  // FLAC — lossless, good for batch.
+  FLAC = 2;
+  // MULAW — telephony.
+  MULAW = 3;
+  // ALAW — telephony.
+  ALAW = 4;
+}
+
+// ─── Recognition config ───────────────────────────────────────────────────────
+
+message RecognitionConfig {
+  // Audio encoding of the data sent in all RecognizeAudio messages.
+  AudioEncoding encoding = 1;
+
+  // Sample rate (Hz) of the audio. Set to 16000 for Nemotron streaming model.
+  // The NIM will resample if needed, but 16kHz is the native rate.
+  int32 sample_rate_hertz = 2;
+
+  // BCP-47 language code. e.g. "en-US".
+  string language_code = 3;
+
+  // Maximum number of recognition alternatives. 1 is sufficient for Noteleaf.
+  int32 max_alternatives = 4;
+
+  // If true, adds punctuation and capitalisation to the transcript.
+  // Must be true — the note classifier depends on sentence-ending punctuation
+  // to determine where natural speech segments end.
+  bool enable_automatic_punctuation = 5;
+
+  // If true, returns word-level timestamps. Not used by Noteleaf currently
+  // but kept for future transcript alignment features.
+  bool enable_word_time_offsets = 6;
+
+  // Model name. Leave empty to let Riva select based on other config.
+  // For explicit model selection: "nemotron-asr-streaming"
+  string model = 24;
+
+  // Custom configuration key-value pairs. Used to pass model-specific options
+  // such as context chunk size to the Nemotron streaming model.
+  // e.g. { "chunk_size_ms": "160" }
+  map<string, string> custom_configuration = 30;
+}
+
+// ─── Streaming config ─────────────────────────────────────────────────────────
+
+message StreamingRecognitionConfig {
+  // Core recognition config — applies to all audio chunks in this stream.
+  RecognitionConfig config = 1;
+
+  // If true, the server returns interim results before the final transcript.
+  // Set to true so the live transcript bar updates in real time.
+  bool interim_results = 2;
+}
+
+// ─── Request messages ─────────────────────────────────────────────────────────
+
+message RecognizeRequest {
+  // Config for the offline recognition.
+  RecognitionConfig config = 1;
+  // The full audio data.
+  bytes audio = 2;
+}
+
+message StreamingRecognizeRequest {
+  oneof streaming_request {
+    // First message must be config only — no audio.
+    StreamingRecognitionConfig streaming_config = 1;
+    // Subsequent messages must be audio only — no config.
+    bytes audio_content = 2;
+  }
+}
+
+// ─── Response messages ────────────────────────────────────────────────────────
+
+message RecognizeResponse {
+  // Sequential transcription results.
+  repeated SpeechRecognitionResult results = 1;
+}
+
+message StreamingRecognizeResponse {
+  // One or more results for the current streaming segment.
+  repeated StreamingRecognitionResult results = 2;
+}
+
+// ─── Result types ─────────────────────────────────────────────────────────────
+
+message SpeechRecognitionResult {
+  // Top alternative is [0] — always used for Noteleaf.
+  repeated SpeechRecognitionAlternative alternatives = 1;
+
+  // Which audio channel this result came from (for multi-channel audio).
+  int32 channel_tag = 2;
+}
+
+message StreamingRecognitionResult {
+  // Top alternative is [0].
+  repeated SpeechRecognitionAlternative alternatives = 1;
+
+  // If false: interim result (may change). If true: final, will not change.
+  // The note classifier ONLY fires on is_final === true results.
+  bool is_final = 2;
+
+  // Stability estimate for the interim result. 0.0 = unstable, 1.0 = stable.
+  float stability = 3;
+
+  // Which audio channel.
+  int32 channel_tag = 5;
+}
+
+message SpeechRecognitionAlternative {
+  // The transcribed text.
+  string transcript = 1;
+
+  // Confidence score 0.0–1.0. Only set when is_final === true.
+  float confidence = 2;
+
+  // Word-level timestamps. Populated when enable_word_time_offsets is true.
+  repeated WordInfo words = 3;
+}
+
+message WordInfo {
+  // Start time of this word in milliseconds from the start of the audio.
+  int64 start_time = 1;
+  // End time of this word in milliseconds.
+  int64 end_time = 2;
+  // The word text.
+  string word = 3;
+  // Confidence for this specific word.
+  float confidence = 4;
+}
