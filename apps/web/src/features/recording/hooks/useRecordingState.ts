@@ -1,26 +1,10 @@
-/**
- * @file useRecordingState.ts
- * @description Central orchestrator hook for the recording feature.
- *
- * Pipeline:
- *   useSpeechRecognition (browser Web Speech API → partial + final transcripts)
- *       ↓
- *   useNoteClassifier (final transcripts → classified Note objects)
- *       ↓
- *   useSessionStore (notes appended to active session state → UI re-renders)
- *
- * The Web Speech API replaced the previous NVIDIA NIM + AudioWorklet chain.
- * It works out-of-the-box in Chrome, Edge, and Safari with no server config.
- * The note classifier, session store, cloud save, and local file export are
- * unchanged — swapping the STT source had no effect on the rest of the pipeline.
- */
-
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useSpeechRecognition } from './useSpeechRecognition';
 import { useNoteClassifier } from '@/features/notes/useNoteClassifier';
 import { useSessionStore } from '@/store/session.store';
 import { useUserStore } from '@/store/user.store';
+import { useAuthStore } from '@/store/auth.store';
 import { sessionsApi } from '@/features/sessions/sessions.api';
 import type { TranscriptSegment } from '@noteleaf/shared-types';
 
@@ -46,8 +30,8 @@ export function useRecordingState(): UseRecordingStateReturn {
   const [error, setError]                     = useState<string | null>(null);
 
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
-  const elapsedRef  = useRef(0);
+  const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const elapsedRef = useRef(0);
 
   // ── Stores ─────────────────────────────────────────────────────────────
 
@@ -59,7 +43,8 @@ export function useRecordingState(): UseRecordingStateReturn {
     appendTranscriptSegment,
   } = useSessionStore();
 
-  const { uuid, storageMode, preferences } = useUserStore();
+  const { preferences } = useUserStore();
+  const userId = useAuthStore((s) => s.user?.id ?? '');
 
   // ── Note classifier ────────────────────────────────────────────────────
 
@@ -141,22 +126,17 @@ export function useRecordingState(): UseRecordingStateReturn {
 
     let sessionId = activeSessionId;
     if (!sessionId) {
-      sessionId = createSession(uuid);
-      if (storageMode === 'cloud') {
-        try {
-          await sessionsApi.create({ id: sessionId, title: '' });
-        } catch (err) {
-          console.error('[Session] Failed to create session before recording:', err);
-          setRecordingStatus('error');
-          return;
-        }
+      sessionId = createSession(userId);
+      try {
+        await sessionsApi.create({ id: sessionId, title: '' });
+      } catch (err) {
+        console.error('[Session] Failed to create session before recording:', err);
+        setRecordingStatus('error');
+        return;
       }
     }
 
-    // SpeechRecognition requests mic permission automatically on start().
-    // If denied it fires onerror('not-allowed') which sets recordingStatus='error'.
     startSTT(preferences.speechLanguage);
-
     setRecordingStatus('recording');
     startTimer();
   }, [
@@ -165,8 +145,7 @@ export function useRecordingState(): UseRecordingStateReturn {
     isSupported,
     recordingStatus,
     startSTT,
-    storageMode,
-    uuid,
+    userId,
     preferences.speechLanguage,
   ]);
 
@@ -179,8 +158,6 @@ export function useRecordingState(): UseRecordingStateReturn {
     setLiveTranscript('');
     stopTimer();
 
-    // stop() resolves after the final onend fires, so all pending final
-    // transcripts are already in the Zustand store when we read below.
     await stopSTT();
 
     const {
@@ -191,9 +168,7 @@ export function useRecordingState(): UseRecordingStateReturn {
       sessions: stoppedSessions,
     } = useSessionStore.getState();
 
-    // Cloud save — local file export (with AI summary) is handled by NotepadShell
-    // after generateAiNotes() resolves so the summary is included in the file.
-    if (storageMode === 'cloud' && stoppedSessionId) {
+    if (stoppedSessionId) {
       const stoppedTitle = stoppedSessions.find((s) => s.id === stoppedSessionId)?.title ?? '';
       try {
         await sessionsApi.update(stoppedSessionId, {
@@ -210,7 +185,7 @@ export function useRecordingState(): UseRecordingStateReturn {
     }
 
     setRecordingStatus('idle');
-  }, [recordingStatus, stopSTT, storageMode]);
+  }, [recordingStatus, stopSTT]);
 
   return { recordingStatus, liveTranscript, elapsedSeconds, error, startRecording, stopRecording };
 }

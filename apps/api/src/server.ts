@@ -1,20 +1,6 @@
-/**
- * @file server.ts
- * @description Fastify server entry point.
- *
- * Architecture:
- *   - buildApp() is a factory that creates and configures the Fastify instance.
- *     It is exported so tests can call buildApp() to get a fresh server without
- *     binding to a port (avoiding port conflicts in parallel test runs).
- *   - The bottom of this file calls buildApp() and starts listening only when
- *     run directly (not imported as a module).
- *
- * Plugin registration order matters in Fastify:
- *   1. Core plugins (helmet, cors, rate-limit) — must be first
- *   2. Database plugin — other plugins may need DB access
- *   3. WebSocket plugin — must be registered before WebSocket routes
- *   4. Routes — registered last, after all decorators are available
- */
+// Fastify server entry point.
+// buildApp() is a factory so tests can spin up the app without binding a port.
+// Plugin order matters: security headers → CORS → rate-limit → WebSocket → DB → routes.
 
 import Fastify, { type FastifyError } from 'fastify';
 import cors from '@fastify/cors';
@@ -29,15 +15,9 @@ import { aiSummarizeRoute } from './routes/summarize.route.js';
 import { healthRoute } from './routes/health.route.js';
 import { identityRoute } from './routes/identity.route.js';
 import { chatRoute } from './routes/chat.route.js';
+import { authRoute } from './routes/auth.route.js';
 
-// ─── App factory ──────────────────────────────────────────────────────────────
-
-/**
- * Creates and configures the Fastify application.
- * Does NOT start listening — call app.listen() separately.
- *
- * @param opts - Optional overrides for testing (e.g. disable rate limits).
- */
+/** Creates and configures the Fastify app. Does not start listening. */
 export async function buildApp(opts: { disableRateLimit?: boolean } = {}): Promise<ReturnType<typeof Fastify>> {
   const app = Fastify({
     // Use our structured Pino logger throughout Fastify internals.
@@ -49,14 +29,14 @@ export async function buildApp(opts: { disableRateLimit?: boolean } = {}): Promi
     requestIdLogLabel: 'requestId',
   });
 
-  // ── Security headers ──────────────────────────────────────────────────────
+  // Security headers
 
   await app.register(helmet, {
     // Content Security Policy is relaxed here — the frontend enforces its own.
     contentSecurityPolicy: false,
   });
 
-  // ── CORS ─────────────────────────────────────────────────────────────────
+  // CORS
 
   const allowedOrigins = (process.env['ALLOWED_ORIGINS'] ?? 'http://localhost:3003')
     .split(',')
@@ -65,11 +45,11 @@ export async function buildApp(opts: { disableRateLimit?: boolean } = {}): Promi
   await app.register(cors, {
     origin: allowedOrigins,
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'x-user-uuid', 'x-request-id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-request-id'],
     credentials: false,
   });
 
-  // ── Rate limiting ─────────────────────────────────────────────────────────
+  // Rate limiting
 
   if (!opts.disableRateLimit) {
     await app.register(rateLimit, {
@@ -86,19 +66,20 @@ export async function buildApp(opts: { disableRateLimit?: boolean } = {}): Promi
     });
   }
 
-  // ── WebSocket ─────────────────────────────────────────────────────────────
+  // WebSocket
 
   await app.register(websocket);
 
-  // ── Database ──────────────────────────────────────────────────────────────
+  // Database
 
   await app.register(prismaPlugin);
 
-  // ── Routes (all under /api prefix) ───────────────────────────────────────
+  // Routes (all under /api prefix)
 
   await app.register(
     async (apiScope) => {
       await apiScope.register(healthRoute);
+      await apiScope.register(authRoute);
       await apiScope.register(sessionsRoute);
       await apiScope.register(aiSummarizeRoute);
       await apiScope.register(sttStreamRoute);
@@ -108,7 +89,7 @@ export async function buildApp(opts: { disableRateLimit?: boolean } = {}): Promi
     { prefix: '/api' },
   );
 
-  // ── 404 handler ───────────────────────────────────────────────────────────
+  // 404 handler
 
   app.setNotFoundHandler((_request, reply) => {
     void reply.code(404).send({
@@ -118,7 +99,7 @@ export async function buildApp(opts: { disableRateLimit?: boolean } = {}): Promi
     });
   });
 
-  // ── Global error handler ──────────────────────────────────────────────────
+  // Global error handler
 
   app.setErrorHandler((error: FastifyError, _request, reply) => {
     logger.error({ err: error }, 'Unhandled route error');
@@ -138,7 +119,6 @@ export async function buildApp(opts: { disableRateLimit?: boolean } = {}): Promi
   return app;
 }
 
-// ─── Start server ─────────────────────────────────────────────────────────────
 
 const port = Number(process.env['PORT'] ?? 3001);
 const host = '0.0.0.0';

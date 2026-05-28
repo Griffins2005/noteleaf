@@ -1,43 +1,34 @@
-# ─── Dependencies ───────────────────────────────────────────────────────────
+# Dependencies
 node_modules/
-.pnp
-.pnp.js
 
-# ─── Build outputs ───────────────────────────────────────────────────────────
+# Build outputs
 dist/
 .next/
 out/
 build/
 
-# ─── Turbo cache ─────────────────────────────────────────────────────────────
+# Turbo
 .turbo/
 
-# ─── Environment variables — NEVER commit real secrets ───────────────────────
+# Env files
 .env
 .env.local
 .env.*.local
 .env.development
 .env.production
 
-# ─── Testing ─────────────────────────────────────────────────────────────────
-coverage/
-.nyc_output/
+# Logs
+*.log
 
-# ─── Editor / OS artifacts ───────────────────────────────────────────────────
+# TypeScript
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+
+# OS / editor
 .DS_Store
 *.pem
-Thumbs.db
-.idea/
 .vscode/settings.json
-
-# ─── Logs ────────────────────────────────────────────────────────────────────
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# ─── TypeScript ──────────────────────────────────────────────────────────────
-*.tsbuildinfo
 
 .claude

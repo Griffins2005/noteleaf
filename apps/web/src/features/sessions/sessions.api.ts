@@ -24,7 +24,7 @@ import type {
   Note,
 } from '@noteleaf/shared-types';
 
-// ─── API service ──────────────────────────────────────────────────────────────
+// API service
 
 export const sessionsApi = {
   /**

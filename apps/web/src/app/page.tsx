@@ -1,20 +1,9 @@
-/**
- * @file page.tsx
- * @description Root page — the app entry point.
- *
- * This is a Server Component. Its only job is to render the NotepadShell
- * client component. All interactive logic lives in NotepadShell.
- *
- * The page intentionally has no server-side data fetching. Session data
- * is loaded client-side (from localStorage or the API) because:
- *   1. Sessions are user-specific and require the UUID from localStorage.
- *   2. The UUID is not available server-side (no auth, no cookies).
- *   3. SSR for session data would require cookies or URL params — unnecessary
- *      complexity for a v1 product.
- */
+// Root page. Wraps NotepadShell in AuthGuard so unauthenticated users
+// are redirected to /auth before any session data is fetched.
 
 import type { Metadata } from 'next';
 import { NotepadShell } from '@/components/layout/NotepadShell';
+import { AuthGuard } from '@/components/layout/AuthGuard';
 
 export const metadata: Metadata = {
   title: 'Noteleaf',
@@ -22,5 +11,9 @@ export const metadata: Metadata = {
 };
 
 export default function HomePage() {
-  return <NotepadShell />;
+  return (
+    <AuthGuard>
+      <NotepadShell />
+    </AuthGuard>
+  );
 }

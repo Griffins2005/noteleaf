@@ -1,19 +1,5 @@
-/**
- * @file layout.tsx
- * @description Next.js root layout — applied to every page in the app.
- *
- * Server component. Responsibilities:
- *   - Load Google Fonts (DM Mono + Fraunces) via Next.js font optimisation.
- *   - Import global CSS tokens and resets.
- *   - Wrap the app in client-side Providers (React Query, store hydration).
- *   - Set HTML lang attribute and document metadata.
- *
- * Font choices:
- *   - DM Mono: The app's primary typeface. Monospace conveys precision and
- *     structure — appropriate for a note-taking tool that classifies speech.
- *   - Fraunces: Optical-size variable serif used for the logo, session titles,
- *     and the recording timer. Creates a warm, editorial contrast to the mono.
- */
+// Root layout. Loads fonts, global CSS tokens, and wraps every page in
+// the React Query + Zustand provider tree.
 
 import type { Metadata, Viewport } from 'next';
 import { DM_Mono, Fraunces } from 'next/font/google';
@@ -21,7 +7,6 @@ import { Providers } from '@/components/layout/Providers';
 import '@/styles/tokens.css';
 import '@/styles/globals.css';
 
-// ─── Fonts ────────────────────────────────────────────────────────────────────
 
 const dmMono = DM_Mono({
   subsets: ['latin'],
@@ -39,7 +24,6 @@ const fraunces = Fraunces({
   display: 'swap',
 });
 
-// ─── Metadata ─────────────────────────────────────────────────────────────────
 
 export const metadata: Metadata = {
   title: {
@@ -59,7 +43,6 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-// ─── Layout ───────────────────────────────────────────────────────────────────
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -67,7 +50,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       lang="en"
       className={`${dmMono.variable} ${fraunces.variable}`}
     >
-      <body className="font-mono bg-[var(--nl-color-paper-bg)] text-[var(--nl-color-ink-primary)] antialiased overflow-hidden">
+      <body className="font-mono bg-[var(--nl-color-paper-bg)] text-[var(--nl-color-ink-primary)] antialiased">
         <Providers>
           {children}
         </Providers>

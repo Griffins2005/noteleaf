@@ -12,9 +12,6 @@
 
 export type {
   // User domain
-  StorageMode,
-  LocalSaveMode,
-  UserIdentity,
   UserPreferences,
 } from './user.types.js';
 

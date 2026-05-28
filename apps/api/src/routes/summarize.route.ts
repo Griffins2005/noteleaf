@@ -11,12 +11,13 @@
  * The NVIDIA API key is kept server-side. The browser never sees it.
  */
 
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import type { SummarizeRequest, SummarizeResponse } from '@noteleaf/shared-types';
 import { nvidiaLlmService } from '../services/nvidia.llm.service.js';
 import { logger } from '../logger.js';
+import { requireAuth } from '../lib/auth.js';
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
@@ -40,30 +41,13 @@ const summarizeSchema = z.object({
   sessionTitle: z.string().max(200).optional(),
 });
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
-
-function requireUserUuid(request: FastifyRequest, reply: FastifyReply): string {
-  const rawUuid = request.headers['x-user-uuid'];
-  const uuid = typeof rawUuid === 'string' ? rawUuid : undefined;
-
-  if (!uuid || !/^[0-9a-f-]{36}$/.test(uuid)) {
-    void reply.code(401).send({
-      success: false,
-      error: { code: 'MISSING_USER_UUID', message: 'A valid x-user-uuid header is required.' },
-      timestamp: new Date().toISOString(),
-    });
-    return '';
-  }
-  return uuid;
-}
-
 // ─── Route plugin ─────────────────────────────────────────────────────────────
 
 export async function aiSummarizeRoute(fastify: FastifyInstance): Promise<void> {
   fastify.post<{ Body: SummarizeRequest }>(
     '/ai/summarize',
     async (request, reply): Promise<SummarizeResponse> => {
-      const userUuid = requireUserUuid(request, reply);
+      const userUuid = await requireAuth(request, reply);
       if (!userUuid) return reply as unknown as SummarizeResponse;
 
       const parsed = summarizeSchema.safeParse(request.body);

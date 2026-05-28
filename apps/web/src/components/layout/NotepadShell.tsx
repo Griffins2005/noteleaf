@@ -1,35 +1,10 @@
-/**
- * @file NotepadShell.tsx
- * @description The main application shell — the full Noteleaf UI.
- *
- * This is the primary Client Component that assembles all features:
- *   - StorageOnboarding modal (shown on first launch)
- *   - TopBar with logo, navigation tabs, and status indicator
- *   - SessionSidebar (session list, new session, sync button)
- *   - Main content area:
- *       - Session title input
- *       - LiveTranscriptBar
- *       - Notes list (NoteCard per note)
- *       - AiSummaryCard
- *       - AI generate button
- *   - BottomBar with MicButton, RecordingTimer, status text
- *   - Settings panel (toggled via top nav)
- *
- * Architecture: this component is the composition root of the UI. It holds
- * no business logic itself — it composes hooks and feature components.
- * All state comes from the Zustand stores via the recording/session hooks.
- */
-
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 // Feature components
-import { StorageOnboarding } from '@/features/storage/components/StorageOnboarding';
-import { FolderPickerButton } from '@/features/storage/components/FolderPickerButton';
-import { useStorageFolderHandle } from '@/features/storage/useStorageFolderHandle';
-import { IdentityRecovery } from '@/features/identity/IdentityRecovery';
+import Link from 'next/link';
 import { ChatPanel } from '@/features/chat/ChatPanel';
 import { NavigationSidebar } from '@/components/layout/NavigationSidebar';
 import { SessionTranscriptPanel } from '@/components/layout/SessionTranscriptPanel';
@@ -39,7 +14,7 @@ import { RecordingTimer } from '@/features/recording/components/RecordingTimer';
 import { NoteCard } from '@/features/notes/components/NoteCard';
 import { AiSummaryCard } from '@/features/notes/components/AiSummaryCard';
 
-// UI components
+// UI
 import { Button } from '@/components/ui/Button';
 import { Toggle } from '@/components/ui/Toggle';
 
@@ -49,6 +24,7 @@ import { useRecordingState } from '@/features/recording/hooks/useRecordingState'
 // Stores
 import { useSessionStore, selectActiveSessionListItem } from '@/store/session.store';
 import { useUserStore } from '@/store/user.store';
+import { useAuthStore } from '@/store/auth.store';
 
 // Services
 import { sessionsApi } from '@/features/sessions/sessions.api';
@@ -59,24 +35,36 @@ import { exportFormatter } from '@/lib/exportFormatter';
 import type { AiSummary, SummarizeRequest, TranscriptSegment, NoteType } from '@noteleaf/shared-types';
 import { cn } from '@/lib/cn';
 
-import { saveSessionData, loadSessionData } from '@/lib/localDb';
-
 // ─── Settings panel ───────────────────────────────────────────────────────────
 
 function SettingsPanel() {
-  const {
-    storageMode, localSaveMode, uuid, email, preferences,
-    setPreference, setStorageMode, resetIdentity, setEmail, applyRecoveredUuid,
-  } = useUserStore();
-  const [pendingMode, setPendingMode] = useState(storageMode);
-  const [pendingLocal, setPendingLocal] = useState(localSaveMode);
-  const [saved, setSaved] = useState(false);
+  const { preferences, setPreference } = useUserStore();
+  const user     = useAuthStore((s) => s.user);
+  const signOut  = useAuthStore((s) => s.signOut);
 
-  function handleSave() {
-    if (!pendingMode) return;
-    setStorageMode(pendingMode, pendingLocal ?? undefined);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+  const [retentionDays, setRetentionDays] = useState<number | null>(preferences.retentionDays);
+  const [prefSaved, setPrefSaved]         = useState(false);
+  const [deleting, setDeleting]           = useState(false);
+
+  async function handleSaveRetention(days: number | null) {
+    setRetentionDays(days);
+    setPreference('retentionDays', days);
+    try {
+      await http.patch('/api/user/preferences', { retentionDays: days });
+      setPrefSaved(true);
+      setTimeout(() => setPrefSaved(false), 2000);
+    } catch { /* non-fatal */ }
+  }
+
+  async function handleDeleteAccount() {
+    if (!confirm('Delete your account and all sessions permanently? This cannot be undone.')) return;
+    setDeleting(true);
+    try {
+      await http.delete('/api/auth/account');
+      await signOut();
+    } catch {
+      setDeleting(false);
+    }
   }
 
   const prefRow = (label: string, sub: string, key: keyof typeof preferences) => (
@@ -95,95 +83,32 @@ function SettingsPanel() {
 
   return (
     <div className="flex-1 overflow-y-auto p-7 space-y-8">
-      {/* Storage section */}
+
+      {/* Account */}
       <section>
         <h3 className="text-[10px] font-mono uppercase tracking-[1px] text-[var(--nl-color-ink-tertiary)] pb-3 border-b border-[var(--nl-border-subtle)] mb-4">
-          Storage preference
+          Account
         </h3>
-        <div className="grid grid-cols-2 gap-3 mb-4">
-          {(['cloud', 'local'] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => setPendingMode(mode)}
-              className={cn(
-                'p-4 rounded-[var(--nl-radius-lg)] border-[1.5px] text-left transition-all relative',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--nl-color-accent-primary)]',
-                pendingMode === mode
-                  ? mode === 'cloud'
-                    ? 'border-[var(--nl-color-blue-primary)] bg-[var(--nl-color-blue-subtle)]'
-                    : 'border-[var(--nl-color-accent-primary)] bg-[var(--nl-color-accent-subtle)]'
-                  : 'border-[var(--nl-border-default)] bg-[var(--nl-color-paper-raised)] hover:border-[var(--nl-border-strong)]',
+        <div className="space-y-3">
+          {user && (
+            <div className="flex items-center gap-3 px-3 py-2.5 rounded-[var(--nl-radius-md)] bg-[var(--nl-color-paper-sunken)] border border-[var(--nl-border-subtle)]">
+              {user.avatar && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={user.avatar} alt="" className="w-7 h-7 rounded-full shrink-0" />
               )}
-            >
-              {pendingMode === mode && (
-                <span className="absolute top-2.5 right-2.5 w-4 h-4 rounded-full flex items-center justify-center bg-[var(--nl-color-accent-primary)]" aria-hidden="true">
-                  <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="2,6 5,9 10,3"/></svg>
-                </span>
-              )}
-              <p className="text-[12px] font-mono font-medium text-[var(--nl-color-ink-primary)] capitalize">{mode === 'cloud' ? 'Cloud sync' : 'Local only'}</p>
-              <p className="text-[10px] font-mono text-[var(--nl-color-ink-tertiary)] mt-1 leading-snug">
-                {mode === 'cloud' ? 'Saved under your UUID, any device.' : 'Never leaves your machine.'}
-              </p>
-            </button>
-          ))}
-        </div>
-
-        {pendingMode === 'cloud' && (
-          <div className="flex items-center gap-2 px-3 py-2 rounded-[var(--nl-radius-sm)] bg-[var(--nl-color-blue-subtle)] border border-[var(--nl-color-blue-border)] mb-4">
-            <span className="text-[9px] font-mono uppercase tracking-[0.8px] text-[var(--nl-color-ink-tertiary)] shrink-0">Your ID</span>
-            <code className="flex-1 text-[11px] font-mono text-[var(--nl-color-blue-primary)] truncate">{uuid}</code>
-            <button type="button" onClick={() => navigator.clipboard.writeText(uuid)} className="text-[10px] font-mono text-[var(--nl-color-blue-primary)] hover:underline shrink-0">Copy</button>
-          </div>
-        )}
-
-        {pendingMode === 'local' && (
-          <div className="space-y-2 mb-4">
-            {(['download', 'folder'] as const).map((lm) => (
-              <button
-                key={lm}
-                type="button"
-                onClick={() => setPendingLocal(lm)}
-                className={cn(
-                  'w-full text-left px-3 py-2.5 rounded-[var(--nl-radius-sm)] flex items-center gap-3 border transition-all',
-                  pendingLocal === lm
-                    ? 'border-[var(--nl-color-accent-primary)] bg-[var(--nl-color-accent-subtle)]'
-                    : 'border-[var(--nl-border-subtle)] hover:bg-[var(--nl-color-paper-sunken)]',
-                )}
-              >
-                <p className="text-[12px] font-mono font-medium text-[var(--nl-color-ink-primary)]">
-                  {lm === 'download' ? 'Download after each session' : 'Save to a folder'}
-                </p>
-                {pendingLocal === lm && <svg className="ml-auto text-[var(--nl-color-accent-primary)] shrink-0" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>}
-              </button>
-            ))}
-
-            {/*
-              FolderPickerButton — only shown when the user has selected or
-              previously saved "folder" as their local save mode.
-
-              Rendered directly below the mode selector so the relationship
-              between choosing "Save to a folder" and granting access is
-              spatially obvious — no hunting around the settings page.
-
-              The component handles browser support detection internally:
-              Firefox gets an explanatory banner; Chrome/Edge get the picker.
-            */}
-            {pendingLocal === 'folder' && (
-              <div className="mt-3 pl-1">
-                <FolderPickerButton />
+              <div className="min-w-0">
+                {user.name && <p className="text-[12px] font-sans font-medium text-[var(--nl-color-ink-primary)] truncate">{user.name}</p>}
+                {user.email && <p className="text-[11px] font-mono text-[var(--nl-color-ink-tertiary)] truncate">{user.email}</p>}
               </div>
-            )}
-          </div>
-        )}
-
-        <div className="flex items-center gap-3">
-          <Button variant="primary" size="md" onClick={handleSave}>Save changes</Button>
-          {saved && <span className="text-[11px] font-mono text-[var(--nl-color-accent-primary)]">✓ Saved</span>}
+            </div>
+          )}
+          <Button variant="secondary" size="sm" onClick={() => void signOut()}>
+            Sign out
+          </Button>
         </div>
       </section>
 
-      {/* Preferences section */}
+      {/* Preferences */}
       <section>
         <h3 className="text-[10px] font-mono uppercase tracking-[1px] text-[var(--nl-color-ink-tertiary)] pb-3 border-b border-[var(--nl-border-subtle)] mb-2">
           Preferences
@@ -193,53 +118,35 @@ function SettingsPanel() {
         {prefRow('Auto-tag keywords', 'Extract keyword tags on each note card', 'autoTagKeywords')}
       </section>
 
-      {/* Recovery email */}
+      {/* Session retention */}
       <section>
         <h3 className="text-[10px] font-mono uppercase tracking-[1px] text-[var(--nl-color-ink-tertiary)] pb-3 border-b border-[var(--nl-border-subtle)] mb-4">
-          Cross-device recovery
+          Session retention
         </h3>
-        {email ? (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 px-3 py-2 rounded-[var(--nl-radius-sm)] bg-[var(--nl-color-accent-subtle)] border border-[var(--nl-color-accent-border)]">
-              <span className="text-[9px] font-mono uppercase tracking-[0.8px] text-[var(--nl-color-ink-tertiary)] shrink-0">Linked</span>
-              <code className="flex-1 text-[11px] font-mono text-[var(--nl-color-accent-primary)] truncate">{email}</code>
-            </div>
-            <p className="text-[10px] font-mono text-[var(--nl-color-ink-tertiary)] leading-relaxed">
-              Enter this email on any device to recover your sessions.
-            </p>
+        <p className="text-[10px] font-mono text-[var(--nl-color-ink-tertiary)] leading-relaxed mb-3">
+          Choose how long your sessions are kept. Auto-delete runs daily.
+        </p>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          {([
+            { label: 'Keep forever', days: null },
+            { label: 'Delete after 30 days', days: 30 },
+          ] as const).map(({ label, days }) => (
             <button
+              key={label}
               type="button"
-              onClick={() => {
-                if (confirm('Link a different recovery email?')) {
-                  setEmail('');
-                }
-              }}
-              className="text-[10px] font-mono text-[var(--nl-color-ink-tertiary)] hover:text-[var(--nl-color-ink-primary)] underline"
+              onClick={() => void handleSaveRetention(days)}
+              className={cn(
+                'px-3 py-2.5 rounded-[var(--nl-radius-md)] border text-left text-[11px] font-mono transition-all',
+                retentionDays === days
+                  ? 'border-[var(--nl-color-accent-primary)] bg-[var(--nl-color-accent-subtle)] text-[var(--nl-color-accent-primary)]'
+                  : 'border-[var(--nl-border-default)] text-[var(--nl-color-ink-secondary)] hover:border-[var(--nl-border-strong)]',
+              )}
             >
-              Change email
+              {label}
             </button>
-          </div>
-        ) : (
-          <>
-            <p className="text-[10px] font-mono text-[var(--nl-color-ink-tertiary)] leading-relaxed mb-3">
-              Link a recovery email so you can access your notes on a new device.
-              On a new device, enter the same email to get your UUID back.
-            </p>
-            <IdentityRecovery
-              currentUuid={uuid}
-              linkedEmail={email}
-              onSuccess={(recoveredUuid, recoveredEmail, isRecovery) => {
-                if (isRecovery) {
-                  applyRecoveredUuid(recoveredUuid, recoveredEmail);
-                  // Clear session list — it will refetch under the recovered UUID.
-                  useSessionStore.getState().setSessions([]);
-                } else {
-                  setEmail(recoveredEmail);
-                }
-              }}
-            />
-          </>
-        )}
+          ))}
+        </div>
+        {prefSaved && <span className="text-[11px] font-mono text-[var(--nl-color-accent-primary)]">✓ Saved</span>}
       </section>
 
       {/* Danger zone */}
@@ -247,18 +154,33 @@ function SettingsPanel() {
         <h3 className="text-[10px] font-mono uppercase tracking-[1px] text-[var(--nl-color-ink-tertiary)] pb-3 border-b border-[var(--nl-border-subtle)] mb-4">
           Danger zone
         </h3>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-[12px] font-mono text-[var(--nl-color-ink-secondary)]">Reset storage preference</p>
-              <p className="text-[10px] font-mono text-[var(--nl-color-ink-tertiary)] mt-0.5">Show the onboarding screen again</p>
-            </div>
-            <Button variant="danger" size="sm" onClick={() => { if (confirm('Reset preference and re-onboard?')) resetIdentity(); }}>
-              Re-onboard
-            </Button>
+        <button
+          type="button"
+          onClick={() => void handleDeleteAccount()}
+          disabled={deleting}
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-[var(--nl-radius-md)] border border-red-200 bg-red-50 text-left transition-all hover:bg-red-100 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <div className="w-8 h-8 rounded-full bg-red-100 border border-red-200 flex items-center justify-center shrink-0">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-500">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+              <path d="M10 11v6M14 11v6"/>
+              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+            </svg>
           </div>
-        </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[12px] font-mono font-medium text-red-600">{deleting ? 'Deleting…' : 'Delete account'}</p>
+            <p className="text-[10px] font-mono text-red-400 mt-0.5">Permanently removes all your sessions and data</p>
+          </div>
+        </button>
       </section>
+
+      {/* Legal */}
+      <p className="text-[10px] font-mono text-[var(--nl-color-ink-disabled)] pt-2">
+        <Link href="/terms" className="hover:text-[var(--nl-color-ink-tertiary)] underline underline-offset-2 transition-colors">
+          Terms &amp; Privacy Policy
+        </Link>
+      </p>
     </div>
   );
 }
@@ -268,10 +190,10 @@ function SettingsPanel() {
 type ActiveTab = 'notes' | 'transcript' | 'summary' | 'chat' | 'settings';
 
 export function NotepadShell() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('notes');
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [aiState, setAiState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [aiSummary, setAiSummary] = useState<AiSummary | undefined>();
+  const [activeTab, setActiveTab]               = useState<ActiveTab>('notes');
+  const [aiState, setAiState]                   = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [aiSummary, setAiSummary]               = useState<AiSummary | undefined>();
+  const [showDownloadBanner, setShowDownloadBanner] = useState(false);
   const notesEndRef = useRef<HTMLDivElement>(null);
 
   const qc = useQueryClient();
@@ -280,7 +202,7 @@ export function NotepadShell() {
   // ── Stores ─────────────────────────────────────────────────────────────
 
   const {
-    sessions,
+    sessions: zustandSessions,
     activeSessionId,
     activeNotes,
     activeTranscript,
@@ -292,8 +214,8 @@ export function NotepadShell() {
     removeSession,
   } = useSessionStore();
 
-  const { uuid, hasOnboarded, storageMode, localSaveMode, preferences, completeOnboarding } = useUserStore();
-  const { saveToFolder, hasFolder } = useStorageFolderHandle();
+  const { preferences } = useUserStore();
+  const userId = useAuthStore((s) => s.user?.id ?? '');
 
   const activeItem = useSessionStore(selectActiveSessionListItem);
 
@@ -308,30 +230,32 @@ export function NotepadShell() {
     stopRecording,
   } = useRecordingState();
 
-  // ── Queries ────────────────────────────────────────────────────────────
+  // ── Query: session list ────────────────────────────────────────────────
 
-  // Fetch session list from API when in cloud mode
-  const { data: cloudSessions = [] } = useQuery({
-    queryKey: ['sessions', uuid],
-    queryFn: () => sessionsApi.list(),
-    enabled: storageMode === 'cloud' && !!uuid,
+  const { data: apiSessions = [] } = useQuery({
+    queryKey: ['sessions', userId],
+    queryFn:  () => sessionsApi.list(),
+    enabled:  !!userId,
   });
+
+  // Merge: Zustand has optimistic new sessions; API is source of truth for existing ones.
+  const sessions = useMemo(() => {
+    const apiIds = new Set(apiSessions.map((s) => s.id));
+    return [...zustandSessions.filter((s) => !apiIds.has(s.id)), ...apiSessions];
+  }, [zustandSessions, apiSessions]);
 
   // ── Mutations ──────────────────────────────────────────────────────────
 
   const createSessionMutation = useMutation({
     mutationFn: (payload: { id: string; title: string }) => sessionsApi.create(payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions', uuid] }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['sessions', userId] }),
   });
 
   const deleteSessionMutation = useMutation({
     mutationFn: (id: string) => sessionsApi.delete(id),
     onSuccess: (_data, deletedId) => {
-      // Remove from local Zustand list immediately — no wait for refetch.
       removeSession(deletedId);
-      // Refresh the cloud sessions list.
-      void qc.invalidateQueries({ queryKey: ['sessions', uuid] });
-      // If we just deleted the active session, load the next available one.
+      void qc.invalidateQueries({ queryKey: ['sessions', userId] });
       const { activeSessionId: nextId, sessions: remaining } = useSessionStore.getState();
       if (nextId && nextId !== deletedId) {
         void handleSelectSession(nextId);
@@ -340,85 +264,38 @@ export function NotepadShell() {
         setAiSummary(undefined);
       }
     },
-    onError: (err) => {
-      console.error('[Session] Delete failed:', err);
-    },
   });
-
-  function handleDeleteSession(sessionId: string) {
-    // Confirmation is handled inline in NavigationSidebar's SessionItem.
-    if (storageMode === 'cloud') {
-      deleteSessionMutation.mutate(sessionId);
-    } else {
-      // Local delete — remove immediately and auto-navigate.
-      const wasActive = activeSessionId === sessionId;
-      removeSession(sessionId);
-      if (wasActive) {
-        const { sessions: remaining } = useSessionStore.getState();
-        const next = remaining[0];
-        if (next) void handleSelectSession(next.id);
-        else { setAiState('idle'); setAiSummary(undefined); }
-      }
-    }
-  }
 
   // ── Handlers ───────────────────────────────────────────────────────────
 
   function handleNewSession() {
-    const newId = createSession(uuid);
-    if (storageMode === 'cloud') {
-      createSessionMutation.mutate({ id: newId, title: '' });
-    }
+    const newId = createSession(userId);
+    createSessionMutation.mutate({ id: newId, title: '' });
     setAiState('idle');
     setAiSummary(undefined);
+    setShowDownloadBanner(false);
   }
 
   async function handleSelectSession(sessionId: string) {
     if (sessionId === activeSessionId) return;
     setAiState('idle');
     setAiSummary(undefined);
+    setShowDownloadBanner(false);
 
-    if (storageMode === 'cloud') {
-      try {
-        const session = await sessionsApi.get(sessionId);
-        setActiveSession(
-          session.id,
-          session.notes,
-          session.transcript ?? '',
-          session.transcriptSegments ?? [],
-        );
-        if (session.aiSummary) {
-          setAiState('success');
-          setAiSummary(session.aiSummary);
-        }
-      } catch {
-        // Fall back to local state
-        const local = sessions.find((s) => s.id === sessionId);
-        if (local) setActiveSession(sessionId, [], '', []);
-      }
-    } else {
-      // Local mode: load notes + transcript from IndexedDB.
-      const saved = await loadSessionData(sessionId);
-      setActiveSession(
-        sessionId,
-        saved?.notes ?? [],
-        saved?.transcript ?? '',
-        saved?.transcriptSegments ?? [],
-      );
-      if (saved?.aiSummary) {
-        setAiState('success');
-        setAiSummary(saved.aiSummary);
-      }
-    }
-  }
-
-  async function handleSyncCloud() {
-    if (storageMode !== 'cloud') return;
-    setIsSyncing(true);
     try {
-      await qc.invalidateQueries({ queryKey: ['sessions', uuid] });
-    } finally {
-      setIsSyncing(false);
+      const session = await sessionsApi.get(sessionId);
+      setActiveSession(
+        session.id,
+        session.notes,
+        session.transcript ?? '',
+        session.transcriptSegments ?? [],
+      );
+      if (session.aiSummary) {
+        setAiState('success');
+        setAiSummary(session.aiSummary);
+      }
+    } catch {
+      setActiveSession(sessionId, [], '', []);
     }
   }
 
@@ -429,9 +306,9 @@ export function NotepadShell() {
     transcriptSegments?: TranscriptSegment[];
     sessionTitle?: string;
   }): Promise<AiSummary | undefined> => {
-    const sessionId = options?.sessionId ?? activeSessionId;
-    const notes = options?.notes ?? activeNotes;
-    const transcript = options?.transcript ?? activeTranscript;
+    const sessionId          = options?.sessionId ?? activeSessionId;
+    const notes              = options?.notes ?? activeNotes;
+    const transcript         = options?.transcript ?? activeTranscript;
     const transcriptSegments = options?.transcriptSegments ?? activeTranscriptSegments;
 
     if (!sessionId || (notes.length === 0 && transcriptSegments.length === 0 && !transcript.trim())) return undefined;
@@ -444,10 +321,10 @@ export function NotepadShell() {
         transcriptExcerpt: transcript.slice(0, 1500),
         transcriptSegments: transcriptSegments
           .slice(0, 80)
-          .map((segment) => ({
-            text: segment.text,
-            startOffsetSeconds: segment.startOffsetSeconds,
-            endOffsetSeconds: segment.endOffsetSeconds,
+          .map((seg) => ({
+            text: seg.text,
+            startOffsetSeconds: seg.startOffsetSeconds,
+            endOffsetSeconds: seg.endOffsetSeconds,
           })),
         sessionTitle: options?.sessionTitle ?? activeItem?.title,
       } satisfies SummarizeRequest);
@@ -462,8 +339,6 @@ export function NotepadShell() {
     }
   }, [activeItem?.title, activeNotes, activeSessionId, activeTranscript, activeTranscriptSegments]);
 
-  // ── Auto-title ─────────────────────────────────────────────────────────
-
   function generateTitle(opts: {
     summary?: AiSummary;
     notes: typeof activeNotes;
@@ -474,55 +349,32 @@ export function NotepadShell() {
       return words.length > 48 ? words.slice(0, 48) + '…' : words;
     };
     if (opts.summary?.overview) return trim(opts.summary.overview, 6);
-    const firstAction = opts.notes.find((n) => n.type !== 'summary') ?? opts.notes[0];
-    if (firstAction?.content) return trim(firstAction.content, 5);
+    const first = opts.notes.find((n) => n.type !== 'summary') ?? opts.notes[0];
+    if (first?.content) return trim(first.content, 5);
     if (opts.transcriptSegments[0]?.text) return trim(opts.transcriptSegments[0].text, 5);
     return `Session ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
   }
 
-  // ── Note edit sync ──────────────────────────────────────────────────────
-
   async function syncNoteEdits(updatedNotes: typeof activeNotes) {
     if (!activeSessionId) return;
-    if (storageMode === 'cloud') {
-      try {
-        await sessionsApi.update(activeSessionId, { notes: updatedNotes });
-      } catch (err) {
-        console.error('[Notes] Failed to save note edit:', err);
-      }
-    } else if (storageMode === 'local') {
-      const existing = await loadSessionData(activeSessionId);
-      if (existing) {
-        await saveSessionData(activeSessionId, { ...existing, notes: updatedNotes });
-      }
+    try {
+      await sessionsApi.update(activeSessionId, { notes: updatedNotes });
+    } catch (err) {
+      console.error('[Notes] Failed to save note edit:', err);
     }
   }
 
   function handleNoteUpdate(id: string, content: string, type: NoteType) {
     updateNote(id, content, type);
-    // Read fresh state immediately after the synchronous store update.
     const latest = useSessionStore.getState().activeNotes;
     void syncNoteEdits(latest);
   }
 
-  // ── Title blur-save (cloud) ─────────────────────────────────────────────
-
   async function handleTitleBlur() {
-    if (storageMode === 'cloud' && activeSessionId && activeItem?.title) {
+    if (activeSessionId && activeItem?.title) {
       try {
         await sessionsApi.update(activeSessionId, { title: activeItem.title });
       } catch { /* non-fatal */ }
-    } else if (storageMode === 'local' && activeSessionId) {
-      const existing = await loadSessionData(activeSessionId);
-      if (existing) {
-        // Title lives in the Zustand sessions list (persisted via idbStorage).
-        // Nothing extra to write here — setActiveSessionTitle already updated it.
-      }
-      useSessionStore.getState().setSessions(
-        useSessionStore.getState().sessions.map((s) =>
-          s.id === activeSessionId ? { ...s, title: activeItem?.title ?? s.title } : s,
-        ),
-      );
     }
   }
 
@@ -550,26 +402,19 @@ export function NotepadShell() {
       sessions: stoppedSessions,
     } = useSessionStore.getState();
 
-    const rawTitle    = stoppedSessions.find((s) => s.id === stoppedSessionId)?.title ?? '';
-    const hasContent  = stoppedNotes.length > 0 || stoppedTranscriptSegments.length > 0 || stoppedTranscript.trim().length > 0;
+    const rawTitle   = stoppedSessions.find((s) => s.id === stoppedSessionId)?.title ?? '';
+    const hasContent = stoppedNotes.length > 0 || stoppedTranscriptSegments.length > 0 || stoppedTranscript.trim().length > 0;
 
-    // Refresh the sidebar so the saved session is visible immediately.
-    if (storageMode === 'cloud') {
-      void qc.invalidateQueries({ queryKey: ['sessions', uuid] });
-    }
+    void qc.invalidateQueries({ queryKey: ['sessions', userId] });
 
-    // Generate AI summary (cloud only — local sessions aren't in the DB).
-    const summary = storageMode === 'cloud'
-      ? await generateAiNotes({
-          sessionId: stoppedSessionId,
-          notes: stoppedNotes,
-          transcript: stoppedTranscript,
-          transcriptSegments: stoppedTranscriptSegments,
-          sessionTitle: rawTitle,
-        })
-      : undefined;
+    const summary = await generateAiNotes({
+      sessionId: stoppedSessionId,
+      notes: stoppedNotes,
+      transcript: stoppedTranscript,
+      transcriptSegments: stoppedTranscriptSegments,
+      sessionTitle: rawTitle,
+    });
 
-    // Auto-name the session if the user left it blank.
     const finalTitle = rawTitle.trim() || generateTitle({
       summary,
       notes: stoppedNotes,
@@ -578,60 +423,13 @@ export function NotepadShell() {
 
     if (!rawTitle.trim() && finalTitle && stoppedSessionId) {
       setActiveSessionTitle(finalTitle);
-      if (storageMode === 'cloud') {
-        try { await sessionsApi.update(stoppedSessionId, { title: finalTitle }); } catch { /* non-fatal */ }
-      }
+      try { await sessionsApi.update(stoppedSessionId, { title: finalTitle }); } catch { /* non-fatal */ }
     }
 
-    // Refresh again so the AI summary badge and title appear on the session list item.
-    if (storageMode === 'cloud') {
-      void qc.invalidateQueries({ queryKey: ['sessions', uuid] });
-    }
+    void qc.invalidateQueries({ queryKey: ['sessions', userId] });
 
-    // Local mode: persist notes + transcript to IndexedDB so the session is
-    // viewable in the sidebar after navigation or page refresh.
-    if (storageMode === 'local' && stoppedSessionId) {
-      await saveSessionData(stoppedSessionId, {
-        notes: stoppedNotes,
-        transcript: stoppedTranscript,
-        transcriptSegments: stoppedTranscriptSegments,
-        durationSeconds: elapsedSeconds,
-        aiSummary: summary,
-      });
-
-      useSessionStore.getState().setSessions(
-        useSessionStore.getState().sessions.map((s) =>
-          s.id === stoppedSessionId
-            ? {
-                ...s,
-                title: finalTitle || s.title,
-                noteCount: stoppedNotes.length,
-                durationSeconds: elapsedSeconds,
-                status: 'stopped' as const,
-              }
-            : s,
-        ),
-      );
-    }
-
-    // Local file export — runs after AI so the summary is included in the file.
-    if (storageMode === 'local' && hasContent) {
-      const { txt, filename } = exportFormatter.toTxt({
-        title: finalTitle,
-        notes: stoppedNotes,
-        transcript: stoppedTranscript,
-        transcriptSegments: stoppedTranscriptSegments,
-        aiSummary: summary,
-        durationSeconds: elapsedSeconds,
-      });
-
-      if (localSaveMode === 'folder' && hasFolder) {
-        const wrote = await saveToFolder(txt, filename);
-        if (!wrote) exportFormatter.triggerDownload(txt, filename);
-      } else {
-        exportFormatter.triggerDownload(txt, filename);
-      }
-    }
+    // Show download banner if there's content to save
+    if (hasContent) setShowDownloadBanner(true);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────
@@ -645,7 +443,9 @@ export function NotepadShell() {
   }
 
   const sessionDate = activeItem
-    ? new Date(activeItem.createdAt).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+    ? new Date(activeItem.createdAt).toLocaleDateString('en-US', {
+        weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+      })
     : null;
 
   const SESSION_TABS: { id: ActiveTab; label: string }[] = [
@@ -658,50 +458,34 @@ export function NotepadShell() {
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
-    <>
-      {/* Onboarding overlay */}
-      {!hasOnboarded && (
-        <StorageOnboarding
-          uuid={uuid}
-          onConfirm={(mode, localMode) => completeOnboarding(mode, localMode)}
-        />
-      )}
+    <div className="flex h-screen overflow-hidden bg-[var(--nl-color-paper-bg)]">
 
-      {/* Full-screen app shell */}
-      <div className="flex h-screen overflow-hidden bg-[var(--nl-color-paper-bg)]">
-        {/* ── Dark navigation sidebar ──────────────────────────────── */}
-        <NavigationSidebar
-          sessions={sessions}
-          cloudSessions={cloudSessions}
-          activeSessionId={activeSessionId}
-          storageMode={storageMode}
-          isSyncing={isSyncing}
-          onSelectSession={handleSelectSession}
-          onDeleteSession={handleDeleteSession}
-          onNewSession={handleNewSession}
-          onSyncCloud={handleSyncCloud}
-          onOpenSettings={() => setActiveTab('settings')}
-        />
+      {/* ── Dark navigation sidebar ──────────────────────────────── */}
+      <NavigationSidebar
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        onSelectSession={handleSelectSession}
+        onDeleteSession={(id) => deleteSessionMutation.mutate(id)}
+        onNewSession={handleNewSession}
+        onOpenSettings={() => setActiveTab('settings')}
+      />
 
-        {/* ── Main content ────────────────────────────────────────── */}
-        <div className="flex flex-col flex-1 min-w-0 overflow-hidden bg-[var(--nl-color-paper-base)]">
+      {/* ── Main content ────────────────────────────────────────── */}
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden bg-[var(--nl-color-paper-base)]">
 
-        {/* Settings (full-page) */}
+        {/* Settings */}
         {activeTab === 'settings' && (
           <div className="flex flex-col flex-1 overflow-hidden">
-            <header className="flex items-center gap-3 px-8 py-5 border-b border-[var(--nl-border-subtle)] shrink-0">
-              <button type="button" onClick={() => setActiveTab('notes')} className="text-[11px] font-mono text-[var(--nl-color-ink-tertiary)] hover:text-[var(--nl-color-ink-primary)] flex items-center gap-1.5 transition-colors">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
-                Back
+            <header className="flex items-center gap-4 px-8 py-5 border-b border-[var(--nl-border-subtle)] shrink-0">
+              <button
+                type="button"
+                onClick={() => setActiveTab('notes')}
+                aria-label="Back"
+                className="w-9 h-9 flex items-center justify-center rounded-[var(--nl-radius-md)] text-[var(--nl-color-ink-tertiary)] hover:text-[var(--nl-color-ink-primary)] hover:bg-[var(--nl-color-paper-sunken)] transition-colors shrink-0"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
               </button>
-              <div className="flex items-center gap-3">
-                {/* App icon */}
-                <div aria-hidden="true" style={{ width: 28, height: 28, borderRadius: 7, background: 'white', overflow: 'hidden', flexShrink: 0 }}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src="/logo.png" alt="" style={{ width: 185, height: 'auto', marginTop: -6, marginLeft: -6, display: 'block' }} />
-                </div>
-                <h1 className="font-serif text-[20px] font-semibold text-[var(--nl-color-ink-primary)]">Settings</h1>
-              </div>
+              <h1 className="font-serif text-[20px] font-semibold text-[var(--nl-color-ink-primary)]">Settings</h1>
             </header>
             <div className="flex-1 overflow-y-auto">
               <div className="max-w-xl mx-auto px-8 py-8">
@@ -711,7 +495,7 @@ export function NotepadShell() {
           </div>
         )}
 
-        {/* Session content (Notes / Transcript / Summary / Chat) */}
+        {/* Session content */}
         {activeTab !== 'settings' && (
           <>
             {/* Session header */}
@@ -760,27 +544,18 @@ export function NotepadShell() {
                     onClick={() => setActiveTab(id)}
                     aria-current={activeTab === id ? 'page' : undefined}
                     className={cn(
-                      'relative px-4 py-2 text-[13px] font-sans border-b-2 transition-colors',
-                      'focus-visible:outline-none',
+                      'relative px-4 py-2 text-[13px] font-sans border-b-2 transition-colors focus-visible:outline-none',
                       activeTab === id
                         ? 'border-[var(--nl-color-accent-primary)] text-[var(--nl-color-ink-primary)] font-medium'
                         : 'border-transparent text-[var(--nl-color-ink-tertiary)] hover:text-[var(--nl-color-ink-secondary)]',
                     )}
                   >
                     {label}
-                    {/* Dot when summary is ready and user is on a different tab */}
                     {id === 'summary' && aiState === 'success' && activeTab !== 'summary' && (
-                      <span
-                        className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-[var(--nl-color-accent-primary)]"
-                        aria-label="Summary ready"
-                      />
+                      <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-[var(--nl-color-accent-primary)]" aria-label="Summary ready" />
                     )}
-                    {/* Spinner while generating */}
                     {id === 'summary' && aiState === 'loading' && activeTab !== 'summary' && (
-                      <span
-                        className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-[var(--nl-color-ink-disabled)] animate-pulse"
-                        aria-label="Generating summary"
-                      />
+                      <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-[var(--nl-color-ink-disabled)] animate-pulse" aria-label="Generating summary" />
                     )}
                   </button>
                 ))}
@@ -790,20 +565,53 @@ export function NotepadShell() {
             {/* Tab content */}
             <div className="flex flex-1 min-h-0">
 
-              {/* ── Notes tab ───────────────────────────────────────────── */}
+              {/* ── Notes tab ──────────────────────────────────────────── */}
               {activeTab === 'notes' && (
                 <>
                   <div className="flex flex-col flex-1 min-w-0">
-                    {/* Live transcript bar */}
+
+                    {/* Download banner — appears after recording stops */}
+                    {showDownloadBanner && (
+                      <div className="mx-5 mt-3 shrink-0 flex items-center gap-3 px-4 py-2.5 rounded-[var(--nl-radius-md)] bg-[var(--nl-color-accent-subtle)] border border-[var(--nl-color-accent-border)]">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--nl-color-accent-primary)] shrink-0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        <p className="text-[12px] font-mono text-[var(--nl-color-ink-secondary)] flex-1">Session saved. Download a local copy?</p>
+                        <button
+                          type="button"
+                          onClick={handleExport}
+                          className="text-[11px] font-mono font-medium text-[var(--nl-color-accent-primary)] hover:underline shrink-0"
+                        >
+                          Download .txt
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowDownloadBanner(false)}
+                          className="text-[var(--nl-color-ink-disabled)] hover:text-[var(--nl-color-ink-tertiary)] shrink-0"
+                          aria-label="Dismiss"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                      </div>
+                    )}
+
                     <LiveTranscriptBar transcript={liveTranscript} status={recordingStatus} showTranscript={preferences.showLiveTranscript} />
 
-                    {/* Note search */}
                     {activeNotes.length > 0 && recordingStatus === 'idle' && (
                       <div className="px-6 pt-4 shrink-0">
                         <div className="relative">
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--nl-color-ink-disabled)] pointer-events-none"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                          <input type="search" value={noteSearch} onChange={(e) => setNoteSearch(e.target.value)} placeholder="Search notes…" aria-label="Search notes" className={cn('w-full pl-8 pr-8 py-2 rounded-[var(--nl-radius-md)] text-[12px] font-sans text-[var(--nl-color-ink-primary)] bg-[var(--nl-color-paper-sunken)] border border-[var(--nl-border-subtle)] placeholder:text-[var(--nl-color-ink-disabled)] focus:outline-none focus:border-[var(--nl-color-accent-border)] transition-colors')} />
-                          {noteSearch && <button type="button" onClick={() => setNoteSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--nl-color-ink-disabled)]"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+                          <input
+                            type="search"
+                            value={noteSearch}
+                            onChange={(e) => setNoteSearch(e.target.value)}
+                            placeholder="Search notes…"
+                            aria-label="Search notes"
+                            className="w-full pl-8 pr-8 py-2 rounded-[var(--nl-radius-md)] text-[12px] font-sans text-[var(--nl-color-ink-primary)] bg-[var(--nl-color-paper-sunken)] border border-[var(--nl-border-subtle)] placeholder:text-[var(--nl-color-ink-disabled)] focus:outline-none focus:border-[var(--nl-color-accent-border)] transition-colors"
+                          />
+                          {noteSearch && (
+                            <button type="button" onClick={() => setNoteSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--nl-color-ink-disabled)]">
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                            </button>
+                          )}
                         </div>
                       </div>
                     )}
@@ -811,7 +619,11 @@ export function NotepadShell() {
                     {/* Notes feed */}
                     {(() => {
                       const visible = noteSearch.trim()
-                        ? activeNotes.filter((n) => n.content.toLowerCase().includes(noteSearch.toLowerCase()) || n.tags.some((t) => t.toLowerCase().includes(noteSearch.toLowerCase())) || n.type.includes(noteSearch.toLowerCase()))
+                        ? activeNotes.filter((n) =>
+                            n.content.toLowerCase().includes(noteSearch.toLowerCase()) ||
+                            n.tags.some((t) => t.toLowerCase().includes(noteSearch.toLowerCase())) ||
+                            n.type.includes(noteSearch.toLowerCase())
+                          )
                         : activeNotes;
                       return (
                         <div className="flex-1 overflow-y-auto px-6 pb-6" role="feed" aria-label="Meeting notes" aria-live="polite">
@@ -828,12 +640,9 @@ export function NotepadShell() {
                           ) : (
                             <>
                               {visible.length === 0 && noteSearch.trim() ? (
-                                <p className="pt-8 text-center text-[12px] font-mono text-[var(--nl-color-ink-disabled)] italic">
-                                  No notes match "{noteSearch}"
-                                </p>
+                                <p className="pt-8 text-center text-[12px] font-mono text-[var(--nl-color-ink-disabled)] italic">No notes match &ldquo;{noteSearch}&rdquo;</p>
                               ) : visible.length > 0 ? (
                                 recordingStatus === 'idle' ? (
-                                  /* ── Grouped by type — document view ─────────────── */
                                   <div className="pt-5 pb-4 space-y-6">
                                     {(
                                       [
@@ -842,47 +651,29 @@ export function NotepadShell() {
                                         { type: 'insight',  label: 'Insights'     },
                                         { type: 'summary',  label: 'Notes'        },
                                       ] as { type: import('@noteleaf/shared-types').NoteType; label: string }[]
-                                    )
-                                      .map(({ type, label }) => {
-                                        const group = visible.filter((n) => n.type === type);
-                                        if (group.length === 0) return null;
-                                        return (
-                                          <section key={type} aria-label={label}>
-                                            {/* Section header */}
-                                            <div className="flex items-center gap-3 mb-1">
-                                              <h3 className="text-[10px] font-mono font-semibold uppercase tracking-[1.5px] text-[var(--nl-color-ink-tertiary)] shrink-0">
-                                                {label}
-                                              </h3>
-                                              <span className="text-[10px] font-mono text-[var(--nl-color-ink-disabled)] shrink-0">
-                                                {group.length}
-                                              </span>
-                                              <div className="flex-1 h-px bg-[var(--nl-border-subtle)]" />
-                                            </div>
-                                            {/* Note rows */}
-                                            <div>
-                                              {group.map((note) => (
-                                                <NoteCard
-                                                  key={note.id}
-                                                  note={note}
-                                                  variant="document"
-                                                  onUpdate={handleNoteUpdate}
-                                                />
-                                              ))}
-                                            </div>
-                                          </section>
-                                        );
-                                      })}
+                                    ).map(({ type, label }) => {
+                                      const group = visible.filter((n) => n.type === type);
+                                      if (group.length === 0) return null;
+                                      return (
+                                        <section key={type} aria-label={label}>
+                                          <div className="flex items-center gap-3 mb-1">
+                                            <h3 className="text-[10px] font-mono font-semibold uppercase tracking-[1.5px] text-[var(--nl-color-ink-tertiary)] shrink-0">{label}</h3>
+                                            <span className="text-[10px] font-mono text-[var(--nl-color-ink-disabled)] shrink-0">{group.length}</span>
+                                            <div className="flex-1 h-px bg-[var(--nl-border-subtle)]" />
+                                          </div>
+                                          <div>
+                                            {group.map((note) => (
+                                              <NoteCard key={note.id} note={note} variant="document" onUpdate={handleNoteUpdate} />
+                                            ))}
+                                          </div>
+                                        </section>
+                                      );
+                                    })}
                                   </div>
                                 ) : (
-                                  /* ── Chronological feed — during recording ──────── */
                                   <div className="pt-4 space-y-2">
                                     {visible.map((note) => (
-                                      <NoteCard
-                                        key={note.id}
-                                        note={note}
-                                        variant="feed"
-                                        onUpdate={handleNoteUpdate}
-                                      />
+                                      <NoteCard key={note.id} note={note} variant="feed" onUpdate={handleNoteUpdate} />
                                     ))}
                                   </div>
                                 )
@@ -894,29 +685,40 @@ export function NotepadShell() {
                       );
                     })()}
 
-                    {/* Error */}
                     {recordingError && (
                       <div role="alert" className="mx-5 mb-2 px-4 py-2.5 rounded-[var(--nl-radius-sm)] bg-[var(--nl-color-danger-subtle)] border border-red-200 text-[11px] font-mono text-[var(--nl-color-danger)] shrink-0">
-                        {recordingError === 'permission-denied' ? 'Microphone access denied. Allow it in browser settings.' : recordingError === 'not-supported' ? 'Speech recognition requires Chrome or Edge.' : 'Speech recognition error. Please try again.'}
+                        {recordingError === 'permission-denied'
+                          ? 'Microphone access denied. Allow it in browser settings.'
+                          : recordingError === 'not-supported'
+                          ? 'Speech recognition requires Chrome or Edge.'
+                          : 'Speech recognition error. Please try again.'}
                       </div>
                     )}
 
-                    {/* Recording bar */}
                     <footer className="flex items-center gap-4 px-5 py-4 shrink-0 bg-[var(--nl-color-paper-raised)] border-t border-[var(--nl-border-subtle)]">
                       <MicButton status={recordingStatus} onStart={startRecording} onStop={handleStopRecording} />
                       <div className="flex-1 min-w-0">
                         <p className="text-[13px] font-sans text-[var(--nl-color-ink-secondary)] truncate">
-                          {recordingStatus === 'idle' ? 'Tap to start listening' : recordingStatus === 'connecting' ? 'Connecting…' : recordingStatus === 'recording' ? 'Listening — speak clearly' : recordingStatus === 'stopping' ? 'Wrapping up…' : 'Something went wrong'}
+                          {recordingStatus === 'idle'
+                            ? 'Tap to start listening'
+                            : recordingStatus === 'connecting'
+                            ? 'Connecting…'
+                            : recordingStatus === 'recording'
+                            ? 'Listening — speak clearly'
+                            : recordingStatus === 'stopping'
+                            ? 'Wrapping up…'
+                            : 'Something went wrong'}
                         </p>
                         <p className="text-[10px] font-mono text-[var(--nl-color-ink-disabled)] mt-0.5">
-                          {activeNotes.length > 0 ? `${activeNotes.length} note${activeNotes.length !== 1 ? 's' : ''} captured` : 'notes will appear as you speak'}
+                          {activeNotes.length > 0
+                            ? `${activeNotes.length} note${activeNotes.length !== 1 ? 's' : ''} captured`
+                            : 'notes will appear as you speak'}
                         </p>
                       </div>
                       <RecordingTimer elapsedSeconds={elapsedSeconds} status={recordingStatus} />
                     </footer>
                   </div>
 
-                  {/* Right: searchable transcript panel */}
                   <SessionTranscriptPanel
                     segments={activeTranscriptSegments}
                     liveTranscript={liveTranscript}
@@ -926,7 +728,7 @@ export function NotepadShell() {
                 </>
               )}
 
-              {/* ── Transcript tab ──────────────────────────────────────── */}
+              {/* ── Transcript tab ──────────────────────────────────── */}
               {activeTab === 'transcript' && (
                 <div className="flex-1 overflow-y-auto px-8 py-6">
                   {activeTranscriptSegments.length === 0 && !activeTranscript ? (
@@ -953,7 +755,7 @@ export function NotepadShell() {
                 </div>
               )}
 
-              {/* ── Summary tab ─────────────────────────────────────────── */}
+              {/* ── Summary tab ─────────────────────────────────────── */}
               {activeTab === 'summary' && (
                 <div className="flex-1 overflow-y-auto px-8 py-6">
                   <div className="max-w-2xl mx-auto">
@@ -969,7 +771,7 @@ export function NotepadShell() {
                 </div>
               )}
 
-              {/* ── Chat tab ────────────────────────────────────────────── */}
+              {/* ── Chat tab ────────────────────────────────────────── */}
               {activeTab === 'chat' && (
                 <ChatPanel
                   notes={activeNotes}
@@ -982,8 +784,7 @@ export function NotepadShell() {
           </>
         )}
 
-        </div>{/* end main content */}
       </div>
-    </>
+    </div>
   );
 }

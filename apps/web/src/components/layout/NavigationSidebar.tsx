@@ -14,26 +14,14 @@ function SearchIcon() {
   );
 }
 
-function CloudIcon() {
-  return (
-    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
-    </svg>
-  );
-}
-
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface NavigationSidebarProps {
   sessions: SessionListItem[];
-  cloudSessions: SessionListItem[];
   activeSessionId: string | null;
-  storageMode: 'cloud' | 'local' | null;
-  isSyncing: boolean;
   onSelectSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
   onNewSession: () => void;
-  onSyncCloud: () => void;
   onOpenSettings: () => void;
 }
 
@@ -42,31 +30,24 @@ interface NavigationSidebarProps {
 function SessionItem({
   session,
   isActive,
-  isCloud,
   onClick,
   onDelete,
 }: {
   session: SessionListItem;
   isActive: boolean;
-  isCloud?: boolean;
   onClick: () => void;
   onDelete: () => void;
 }) {
   const [pendingDelete, setPendingDelete] = useState(false);
 
-  const date = new Date(session.updatedAt);
+  const date  = new Date(session.updatedAt);
   const today = new Date();
   const label = date.toDateString() === today.toDateString()
     ? date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
     : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
   return (
-    /* Wrapper — layout only, not interactive itself */
-    <div
-      className="relative group mx-2"
-      style={{ width: 'calc(100% - 16px)' }}
-    >
-      {/* Session selector — proper <button> so nested buttons are valid */}
+    <div className="relative group mx-2" style={{ width: 'calc(100% - 16px)' }}>
       <button
         type="button"
         onClick={onClick}
@@ -74,9 +55,7 @@ function SessionItem({
         className={cn(
           'w-full text-left px-3 py-2.5 rounded-[8px] transition-colors pr-8',
           'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--nl-sidebar-accent)]',
-          isActive
-            ? 'bg-[var(--nl-sidebar-bg-active)]'
-            : 'hover:bg-[var(--nl-sidebar-bg-hover)]',
+          isActive ? 'bg-[var(--nl-sidebar-bg-active)]' : 'hover:bg-[var(--nl-sidebar-bg-hover)]',
         )}
       >
         <p className={cn(
@@ -93,44 +72,24 @@ function SessionItem({
             {label}
           </span>
           {session.noteCount > 0 && (
-            <span className="text-[10px] font-mono text-[var(--nl-sidebar-text-muted)]">
-              · {session.noteCount}
-            </span>
+            <span className="text-[10px] font-mono text-[var(--nl-sidebar-text-muted)]">· {session.noteCount}</span>
           )}
           {session.hasAiSummary && (
             <span className="ml-auto text-[9px] text-[var(--nl-sidebar-accent)] opacity-80">✦</span>
           )}
-          {isCloud && (
-            <span className="ml-auto text-[var(--nl-sidebar-text-muted)]"><CloudIcon /></span>
-          )}
         </div>
       </button>
 
-      {/* Inline confirm — replaces the trash icon when user clicks delete */}
       {pendingDelete ? (
         <div
           className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 px-2 py-1 rounded-md z-10"
           style={{ background: '#1e293b', border: '1px solid rgba(239,68,68,0.25)' }}
         >
           <span className="text-[9px] font-mono mr-1" style={{ color: '#c8b8a0' }}>Sure?</span>
-          <button
-            type="button"
-            onClick={() => { setPendingDelete(false); onDelete(); }}
-            className="text-[10px] font-mono font-semibold text-red-400 hover:text-red-300 px-1 py-0.5 rounded transition-colors"
-          >
-            Yes
-          </button>
-          <button
-            type="button"
-            onClick={() => setPendingDelete(false)}
-            className="text-[10px] font-mono px-1 py-0.5 rounded transition-colors"
-            style={{ color: 'var(--nl-sidebar-text-muted)' }}
-          >
-            No
-          </button>
+          <button type="button" onClick={() => { setPendingDelete(false); onDelete(); }} className="text-[10px] font-mono font-semibold text-red-400 hover:text-red-300 px-1 py-0.5 rounded transition-colors">Yes</button>
+          <button type="button" onClick={() => setPendingDelete(false)} className="text-[10px] font-mono px-1 py-0.5 rounded transition-colors" style={{ color: 'var(--nl-sidebar-text-muted)' }}>No</button>
         </div>
       ) : (
-        /* Trash icon — shows on hover */
         <button
           type="button"
           onClick={() => setPendingDelete(true)}
@@ -154,30 +113,19 @@ function SessionItem({
 
 export function NavigationSidebar({
   sessions,
-  cloudSessions,
   activeSessionId,
-  storageMode,
-  isSyncing,
   onSelectSession,
   onDeleteSession,
   onNewSession,
-  onSyncCloud,
   onOpenSettings,
 }: NavigationSidebarProps) {
   const [query, setQuery] = useState('');
 
-  const filteredSessions = useMemo(() => {
+  const filtered = useMemo(() => {
     if (!query.trim()) return sessions;
     const q = query.toLowerCase();
     return sessions.filter((s) => (s.title || 'untitled session').toLowerCase().includes(q));
   }, [sessions, query]);
-
-  const cloudOnly = useMemo(() => {
-    const base = cloudSessions.filter((cs) => !sessions.find((s) => s.id === cs.id));
-    if (!query.trim()) return base;
-    const q = query.toLowerCase();
-    return base.filter((s) => (s.title || 'untitled session').toLowerCase().includes(q));
-  }, [cloudSessions, sessions, query]);
 
   return (
     <aside
@@ -186,40 +134,24 @@ export function NavigationSidebar({
       aria-label="Sessions navigation"
     >
       {/* Logo */}
-      <div className="px-4 pt-5 pb-4 shrink-0 flex items-center gap-3">
-        {/* Icon — crops the leaf mark from the top-left of logo.png.
-            Container clips; image is scaled so the icon fills the square.
-            Tune marginTop/marginLeft ±2px if the crop drifts. */}
+      <div className="px-4 pt-6 pb-4 shrink-0 flex flex-col items-center gap-2.5">
         <div
           aria-hidden="true"
           style={{
-            width: 46,
-            height: 46,
-            borderRadius: 12,
-            background: 'white',
-            overflow: 'hidden',
-            flexShrink: 0,
-            boxShadow: '0 1px 4px rgba(0,0,0,0.25)',
+            width: 46, height: 46, borderRadius: 13, flexShrink: 0,
+            background: 'linear-gradient(145deg, #1fa463 0%, #0d7a47 100%)',
+            boxShadow: '0 3px 12px rgba(13,122,71,0.45), inset 0 1px 0 rgba(255,255,255,0.18)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/logo.png"
-            alt="Noteleaf icon"
-            style={{
-              width: 307,           /* 46/30 * 200 ≈ 307  — scales icon to fill */
-              height: 'auto',       /* auto → 307 * 1024/1536 = 205px tall      */
-              marginTop: -11,       /* trim whitespace above icon                */
-              marginLeft: -11,      /* trim whitespace left of icon              */
-              display: 'block',
-            }}
-          />
+          <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true">
+            <path d="M13 24C13 24 5 18 5 11.5C5 7.36 8.58 4 13 4C17.42 4 21 7.36 21 11.5C21 18 13 24 13 24Z" fill="white" opacity="0.95"/>
+            <path d="M13 24L13 12" stroke="rgba(13,122,71,0.5)" strokeWidth="1.6" strokeLinecap="round"/>
+            <path d="M13 15.5L9.5 13.5" stroke="rgba(13,122,71,0.35)" strokeWidth="1.2" strokeLinecap="round"/>
+            <path d="M13 19L9.5 17" stroke="rgba(13,122,71,0.35)" strokeWidth="1.2" strokeLinecap="round"/>
+          </svg>
         </div>
-
-        {/* Wordmark */}
-        <span className="font-serif text-[20px] font-bold leading-tight" style={{ color: 'var(--nl-sidebar-text)' }}>
-          Noteleaf
-        </span>
+        <span className="font-serif text-[17px] font-bold leading-tight" style={{ color: 'var(--nl-sidebar-text)', letterSpacing: '-0.2px' }}>Noteleaf</span>
       </div>
 
       {/* New session */}
@@ -240,26 +172,19 @@ export function NavigationSidebar({
       {/* Search */}
       <div className="px-3 pb-3 shrink-0">
         <div className="relative">
-          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--nl-sidebar-text-muted)]">
-            <SearchIcon />
-          </span>
+          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--nl-sidebar-text-muted)]"><SearchIcon /></span>
           <input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search sessions"
             className="w-full pl-7 pr-3 py-1.5 rounded-[6px] text-[11px] font-mono transition-colors outline-none"
-            style={{
-              background: 'rgba(255,255,255,0.05)',
-              border: '1px solid var(--nl-sidebar-border)',
-              color: 'var(--nl-sidebar-text)',
-            }}
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--nl-sidebar-border)', color: 'var(--nl-sidebar-text)' }}
           />
         </div>
       </div>
 
-      {/* Section label */}
-      {(filteredSessions.length > 0 || cloudOnly.length > 0) && (
+      {filtered.length > 0 && (
         <p className="px-5 pb-1 text-[9px] font-mono uppercase tracking-[1.5px]" style={{ color: 'var(--nl-sidebar-text-muted)' }}>
           Sessions
         </p>
@@ -267,13 +192,12 @@ export function NavigationSidebar({
 
       {/* Sessions list */}
       <nav className="flex-1 overflow-y-auto py-1 space-y-0.5" aria-label="Session list">
-        {filteredSessions.length === 0 && cloudOnly.length === 0 && (
+        {filtered.length === 0 && (
           <p className="px-5 py-3 text-[11px] font-mono italic" style={{ color: 'var(--nl-sidebar-text-muted)' }}>
             {query ? 'No matches' : 'No sessions yet'}
           </p>
         )}
-
-        {filteredSessions.map((s) => (
+        {filtered.map((s) => (
           <SessionItem
             key={s.id}
             session={s}
@@ -282,42 +206,10 @@ export function NavigationSidebar({
             onDelete={() => onDeleteSession(s.id)}
           />
         ))}
-
-        {cloudOnly.length > 0 && (
-          <>
-            <p className="px-5 pt-3 pb-1 text-[9px] font-mono uppercase tracking-[1px]" style={{ color: 'var(--nl-sidebar-text-muted)' }}>
-              Cloud
-            </p>
-            {cloudOnly.map((s) => (
-              <SessionItem
-                key={s.id}
-                session={s}
-                isActive={s.id === activeSessionId}
-                isCloud
-                onClick={() => onSelectSession(s.id)}
-                onDelete={() => onDeleteSession(s.id)}
-              />
-            ))}
-          </>
-        )}
       </nav>
 
       {/* Bottom actions */}
-      <div className="shrink-0 px-3 py-3 space-y-1" style={{ borderTop: '1px solid var(--nl-sidebar-border)' }}>
-        {storageMode === 'cloud' && (
-          <button
-            type="button"
-            onClick={onSyncCloud}
-            disabled={isSyncing}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-[6px] text-[11px] font-mono transition-colors"
-            style={{ color: 'var(--nl-sidebar-text)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--nl-sidebar-bg-hover)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-          >
-            <CloudIcon />
-            {isSyncing ? 'Syncing…' : 'Sync cloud'}
-          </button>
-        )}
+      <div className="shrink-0 px-3 py-3" style={{ borderTop: '1px solid var(--nl-sidebar-border)' }}>
         <button
           type="button"
           onClick={onOpenSettings}

@@ -13,6 +13,7 @@ import type { AskNotesRequest, AskNotesResponse } from '@noteleaf/shared-types';
 import type { ApiResponse } from '@noteleaf/shared-types';
 import { nvidiaLlmService } from '../services/nvidia.llm.service.js';
 import { logger } from '../logger.js';
+import { verifyToken } from '../lib/auth.js';
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
@@ -42,7 +43,11 @@ export async function chatRoute(fastify: FastifyInstance): Promise<void> {
   fastify.post<{ Body: AskNotesRequest }>(
     '/chat/ask',
     async (request: FastifyRequest<{ Body: AskNotesRequest }>, reply): Promise<ApiResponse<AskNotesResponse>> => {
-      const uuid = request.headers['x-user-uuid'];
+      const authHeader = request.headers['authorization'];
+      let uuid: string | undefined;
+      if (authHeader?.startsWith('Bearer ')) {
+        try { uuid = (await verifyToken(authHeader.slice(7))).userId; } catch { /* audit only */ }
+      }
 
       const parsed = askSchema.safeParse(request.body);
       if (!parsed.success) {

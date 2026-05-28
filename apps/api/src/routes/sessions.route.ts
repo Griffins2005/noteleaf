@@ -1,23 +1,16 @@
-/**
- * @file sessions.route.ts
- * @description Fastify route handlers for Session CRUD operations.
- *
- * All routes require the `x-user-uuid` header for ownership scoping.
- * There is no traditional authentication — UUID possession IS the credential.
- * Rate limiting is applied via the global @fastify/rate-limit plugin.
- *
- * Routes:
- *   GET    /api/sessions          → List all sessions for a UUID (lightweight)
- *   GET    /api/sessions/:id      → Get one full session with notes + summary
- *   POST   /api/sessions          → Create a new session
- *   PATCH  /api/sessions/:id      → Update title, notes, transcript, status
- *   DELETE /api/sessions/:id      → Delete a session and its summary
- */
+// Session CRUD routes. All routes require a valid JWT (Authorization: Bearer).
+// The userId is extracted from the token and used to scope every DB query.
+//
+// GET    /api/sessions          → list sessions for the current user
+// GET    /api/sessions/:id      → get one session with notes and AI summary
+// POST   /api/sessions          → create a new session
+// PATCH  /api/sessions/:id      → update title, notes, transcript, status
+// DELETE /api/sessions/:id      → delete a session and its AI summary
 
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyInstance } from 'fastify';
+import { requireAuth } from '../lib/auth.js';
 import type { Prisma, SessionStatus as PrismaSessionStatus } from '@prisma/client';
 import { z } from 'zod';
-import { v4 as uuidv4 } from 'uuid';
 import type {
   CreateSessionRequest,
   UpdateSessionRequest,
@@ -31,7 +24,7 @@ import type {
 } from '@noteleaf/shared-types';
 import { logger } from '../logger.js';
 
-// ─── Validation schemas ───────────────────────────────────────────────────────
+// Validation schemas
 
 const uuidSchema = z.string().uuid();
 
@@ -49,32 +42,7 @@ const updateSessionSchema = z.object({
   status: z.enum(['idle', 'recording', 'stopped', 'summarised']).optional(),
 });
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Reads and validates the x-user-uuid header from a request.
- * Returns the UUID string or throws a 401 FastifyError.
- */
-function requireUserUuid(request: FastifyRequest, reply: FastifyReply): string {
-  const rawUuid = request.headers['x-user-uuid'];
-  const uuid = typeof rawUuid === 'string' ? rawUuid : undefined;
-  const result = uuidSchema.safeParse(uuid);
-
-  if (!result.success) {
-    void reply.code(401).send({
-      success: false,
-      error: {
-        code: 'MISSING_USER_UUID',
-        message: 'A valid x-user-uuid header is required.',
-      },
-      timestamp: new Date().toISOString(),
-    });
-    // Return empty string — reply is already sent, route handler should return
-    return '';
-  }
-
-  return result.data;
-}
+// Helpers
 
 /**
  * Maps a Prisma session record to the SessionListItem shape.
@@ -99,51 +67,73 @@ function toSessionListItem(record: {
     durationSeconds: record.durationSeconds,
     status: record.status.toLowerCase() as SessionListItem['status'],
     hasAiSummary: record.aiSummary !== null,
-    isCloudOnly: false,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };
 }
 
-// ─── Route plugin ─────────────────────────────────────────────────────────────
+// Route plugin
 
 export async function sessionsRoute(fastify: FastifyInstance): Promise<void> {
 
-  // ── GET /api/sessions ────────────────────────────────────────────────────
+  // GET /api/sessions
 
-  fastify.get('/sessions', async (request, reply): Promise<GetSessionsResponse> => {
-    const userUuid = requireUserUuid(request, reply);
-    if (!userUuid) return reply as unknown as GetSessionsResponse;
+  fastify.get<{ Querystring: { q?: string; limit?: string; cursor?: string } }>(
+    '/sessions',
+    async (request, reply): Promise<GetSessionsResponse> => {
+      const userUuid = await requireAuth(request, reply);
+      if (!userUuid) return reply as unknown as GetSessionsResponse;
 
-    const records = await fastify.db.session.findMany({
-      where: { userUuid },
-      orderBy: { updatedAt: 'desc' },
-      select: {
-        id: true,
-        userUuid: true,
-        title: true,
-        notes: true,
-        durationSeconds: true,
-        status: true,
-        aiSummary: { select: { id: true } },
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+      const { q, limit: limitStr, cursor } = request.query;
+      const pageSize = Math.min(Number(limitStr ?? 50), 100);
 
-    const sessions: SessionListItem[] = records.map(toSessionListItem);
+      const where: Prisma.SessionWhereInput = { userUuid };
+      if (q?.trim()) {
+        where.title = { contains: q.trim(), mode: 'insensitive' };
+      }
+      if (cursor) {
+        where.updatedAt = { lt: new Date(cursor) };
+      }
 
-    logger.debug({ userUuid, count: sessions.length }, 'Sessions listed');
+      const records = await fastify.db.session.findMany({
+        where,
+        orderBy: { updatedAt: 'desc' },
+        take: pageSize,
+        select: {
+          id: true,
+          userUuid: true,
+          title: true,
+          notes: true,
+          durationSeconds: true,
+          status: true,
+          aiSummary: { select: { id: true } },
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
 
-    return { success: true, data: sessions, timestamp: new Date().toISOString() };
-  });
+      const sessions: SessionListItem[] = records.map(toSessionListItem);
+      const nextCursor = records.length === pageSize
+        ? records[records.length - 1]?.updatedAt.toISOString()
+        : undefined;
 
-  // ── GET /api/sessions/:id ────────────────────────────────────────────────
+      logger.debug({ userUuid, count: sessions.length, q, cursor }, 'Sessions listed');
+
+      return {
+        success: true,
+        data: sessions,
+        ...(nextCursor && { meta: { nextCursor } } as unknown as object),
+        timestamp: new Date().toISOString(),
+      };
+    },
+  );
+
+  // GET /api/sessions/:id
 
   fastify.get<{ Params: { id: string } }>(
     '/sessions/:id',
     async (request, reply): Promise<GetSessionResponse> => {
-      const userUuid = requireUserUuid(request, reply);
+      const userUuid = await requireAuth(request, reply);
       if (!userUuid) return reply as unknown as GetSessionResponse;
 
       const { id } = request.params;
@@ -200,12 +190,12 @@ export async function sessionsRoute(fastify: FastifyInstance): Promise<void> {
     },
   );
 
-  // ── POST /api/sessions ───────────────────────────────────────────────────
+  // POST /api/sessions
 
   fastify.post<{ Body: CreateSessionRequest }>(
     '/sessions',
     async (request, reply): Promise<CreateSessionResponse> => {
-      const userUuid = requireUserUuid(request, reply);
+      const userUuid = await requireAuth(request, reply);
       if (!userUuid) return reply as unknown as CreateSessionResponse;
 
       const parsed = createSessionSchema.safeParse(request.body);
@@ -260,12 +250,12 @@ export async function sessionsRoute(fastify: FastifyInstance): Promise<void> {
     },
   );
 
-  // ── PATCH /api/sessions/:id ──────────────────────────────────────────────
+  // PATCH /api/sessions/:id
 
   fastify.patch<{ Params: { id: string }; Body: UpdateSessionRequest }>(
     '/sessions/:id',
     async (request, reply): Promise<UpdateSessionResponse> => {
-      const userUuid = requireUserUuid(request, reply);
+      const userUuid = await requireAuth(request, reply);
       if (!userUuid) return reply as unknown as UpdateSessionResponse;
 
       const { id } = request.params;
@@ -327,12 +317,12 @@ export async function sessionsRoute(fastify: FastifyInstance): Promise<void> {
     },
   );
 
-  // ── DELETE /api/sessions/:id ─────────────────────────────────────────────
+  // DELETE /api/sessions/:id
 
   fastify.delete<{ Params: { id: string } }>(
     '/sessions/:id',
     async (request, reply): Promise<DeleteSessionResponse> => {
-      const userUuid = requireUserUuid(request, reply);
+      const userUuid = await requireAuth(request, reply);
       if (!userUuid) return reply as unknown as DeleteSessionResponse;
 
       const { id } = request.params;
