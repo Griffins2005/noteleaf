@@ -29,7 +29,7 @@ const summarizeSchema = z.object({
       content: z.string().min(1).max(2000),
       capturedAt: z.string(),
     }),
-  ).min(1, 'At least one note is required to generate a summary.'),
+  ).default([]),
   transcriptExcerpt: z.string().max(1500).default(''),
   transcriptSegments: z.array(
     z.object({
@@ -39,6 +39,17 @@ const summarizeSchema = z.object({
     }),
   ).optional(),
   sessionTitle: z.string().max(200).optional(),
+}).superRefine((data, ctx) => {
+  const hasNotes = data.notes.length > 0;
+  const hasTranscript = data.transcriptExcerpt.trim().length > 0;
+  const hasSegments = (data.transcriptSegments?.length ?? 0) > 0;
+
+  if (!hasNotes && !hasTranscript && !hasSegments) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'At least one note or transcript excerpt is required to generate a summary.',
+    });
+  }
 });
 
 // ─── Route plugin ─────────────────────────────────────────────────────────────

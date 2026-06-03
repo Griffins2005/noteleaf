@@ -1,12 +1,9 @@
-// Auth store — holds the JWT access token, refresh token, and decoded user.
-// Both tokens are persisted in localStorage so they survive page reloads.
-// On init, the access token is decoded client-side to populate the user object
-// without an extra API round-trip. If the token is expired, auth is cleared.
+// Auth store — holds the current user and token expiry in memory only.
+// Tokens live in httpOnly cookies managed by the server; the client never reads them.
+// On init, GET /api/auth/me is called to restore session from an existing cookie.
+// A proactive refresh fires 60 seconds before the access token expires.
 
 import { create } from 'zustand';
-
-const LS_TOKEN         = 'nl_token';
-const LS_REFRESH_TOKEN = 'nl_refresh_token';
 
 export interface AuthUser {
   id:     string;
@@ -16,109 +13,87 @@ export interface AuthUser {
 }
 
 interface AuthState {
-  token:         string | null;
-  refreshToken:  string | null;
-  user:          AuthUser | null;
-  isInitialized: boolean;
+  user:           AuthUser | null;
+  tokenExpiresAt: number | null;   // unix ms when the access token expires
+  isInitialized:  boolean;
 }
 
 interface AuthActions {
-  initAuthStore:       () => void;
-  setAuth:             (token: string, refreshToken: string) => void;
-  clearAuth:           () => void;
-  refreshAccessToken:  () => Promise<boolean>;
-  signOut:             () => Promise<void>;
+  initAuthStore:      () => Promise<void>;
+  setAuth:            (user: AuthUser, tokenExpiresAt: number) => void;
+  clearAuth:          () => void;
+  refreshAccessToken: () => Promise<boolean>;
+  signOut:            () => Promise<void>;
 }
 
-function readToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(LS_TOKEN);
-}
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
-function readRefreshToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(LS_REFRESH_TOKEN);
-}
-
-function parseJwt(token: string): AuthUser | null {
-  try {
-    const raw     = token.split('.')[1] ?? '';
-    const payload = JSON.parse(atob(raw.replace(/-/g, '+').replace(/_/g, '/'))) as Record<string, unknown>;
-    if (!payload['userId'] || (payload['exp'] as number) * 1000 < Date.now()) return null;
-    return {
-      id:    payload['userId'] as string,
-      email: (payload['email'] as string | null) ?? null,
-      name:  (payload['name']  as string | null) ?? null,
-    };
-  } catch {
-    return null;
+function scheduleProactiveRefresh(expiresAt: number, refresh: () => Promise<boolean>): void {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  const delay = expiresAt - Date.now() - 60_000; // fire 60s before expiry
+  if (delay > 0) {
+    refreshTimer = setTimeout(() => { void refresh(); }, delay);
   }
 }
 
 export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
-  token:         null,
-  refreshToken:  null,
-  user:          null,
-  isInitialized: false,
+  user:           null,
+  tokenExpiresAt: null,
+  isInitialized:  false,
 
-  initAuthStore: () => {
-    const token        = readToken();
-    const refreshToken = readRefreshToken();
+  initAuthStore: async () => {
+    try {
+      const res = await fetch('/api/auth/me', { credentials: 'include' });
 
-    if (!token) {
-      set({ token: null, refreshToken: null, user: null, isInitialized: true });
-      return;
-    }
+      if (res.ok) {
+        const json = (await res.json()) as {
+          success: boolean;
+          data?: {
+            id: string; email: string | null; name: string | null;
+            avatar?: string | null; tokenExpiresAt: number;
+          };
+        };
 
-    const user = parseJwt(token);
-    if (!user) {
-      localStorage.removeItem(LS_TOKEN);
-      localStorage.removeItem(LS_REFRESH_TOKEN);
-      set({ token: null, refreshToken: null, user: null, isInitialized: true });
-      return;
-    }
+        if (json.success && json.data) {
+          const { tokenExpiresAt, ...user } = json.data;
+          set({ user, tokenExpiresAt, isInitialized: true });
+          scheduleProactiveRefresh(tokenExpiresAt, get().refreshAccessToken);
+          return;
+        }
+      }
 
-    set({ token, refreshToken, user, isInitialized: true });
+      // Access token expired — attempt a silent refresh via the refresh cookie.
+      if (res.status === 401) {
+        const refreshed = await get().refreshAccessToken();
+        if (refreshed) return; // setAuth inside refreshAccessToken sets isInitialized
+      }
+    } catch { /* network error — treat as signed out */ }
+
+    set({ user: null, tokenExpiresAt: null, isInitialized: true });
   },
 
-  setAuth: (token, refreshToken) => {
-    const user = parseJwt(token);
-    if (!user) return;
-    localStorage.setItem(LS_TOKEN, token);
-    localStorage.setItem(LS_REFRESH_TOKEN, refreshToken);
-    set({ token, refreshToken, user });
+  setAuth: (user, tokenExpiresAt) => {
+    set({ user, tokenExpiresAt, isInitialized: true });
+    scheduleProactiveRefresh(tokenExpiresAt, get().refreshAccessToken);
   },
 
   clearAuth: () => {
-    localStorage.removeItem(LS_TOKEN);
-    localStorage.removeItem(LS_REFRESH_TOKEN);
-    set({ token: null, refreshToken: null, user: null });
+    if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
+    set({ user: null, tokenExpiresAt: null, isInitialized: true });
   },
 
   signOut: async () => {
-    const { refreshToken, clearAuth } = get();
-    if (refreshToken) {
-      try {
-        await fetch('/api/auth/signout', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ refreshToken }),
-        });
-      } catch { /* non-fatal — clear locally regardless */ }
-    }
+    const { clearAuth } = get();
+    try {
+      await fetch('/api/auth/signout', { method: 'POST', credentials: 'include' });
+    } catch { /* non-fatal — clear locally regardless */ }
     clearAuth();
   },
 
   refreshAccessToken: async () => {
-    const { refreshToken, clearAuth, setAuth } = get();
-    if (!refreshToken) return false;
-
+    const { setAuth, clearAuth } = get();
     try {
-      const res = await fetch('/api/auth/refresh', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ refreshToken }),
-      });
+      const res = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
 
       if (!res.ok) {
         clearAuth();
@@ -127,7 +102,10 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
 
       const json = (await res.json()) as {
         success: boolean;
-        data?: { token: string; refreshToken: string };
+        data?: {
+          user: { id: string; email: string | null; name: string | null };
+          tokenExpiresAt: number;
+        };
       };
 
       if (!json.success || !json.data) {
@@ -135,7 +113,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
         return false;
       }
 
-      setAuth(json.data.token, json.data.refreshToken);
+      setAuth(json.data.user, json.data.tokenExpiresAt);
       return true;
     } catch {
       clearAuth();

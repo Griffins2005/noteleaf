@@ -1,0 +1,158 @@
+'use client';
+
+import { useState } from 'react';
+import { exportFormatter, type ExportInput } from '@/lib/exportFormatter';
+import { cn } from '@/lib/cn';
+
+interface PostMeetingActionsProps extends ExportInput {
+  compact?: boolean;
+  onDismiss?: () => void;
+  onAskNotes?: () => void;
+  className?: string;
+}
+
+export function PostMeetingActions({
+  compact = false,
+  onDismiss,
+  onAskNotes,
+  className,
+  ...exportInput
+}: PostMeetingActionsProps) {
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  const exportPayload: ExportInput = exportInput;
+
+  async function withFeedback(label: string, action: () => void | Promise<void>) {
+    await action();
+    setFeedback(label);
+    setTimeout(() => setFeedback(null), 2200);
+  }
+
+  async function handleCopyRecap() {
+    const text = exportFormatter.toRecapPlainText(exportPayload);
+    const ok = await exportFormatter.copyToClipboard(text);
+    setFeedback(ok ? 'Recap copied' : 'Copy failed');
+    setTimeout(() => setFeedback(null), 2200);
+  }
+
+  async function handleCopyActions() {
+    const text = exportFormatter.toActionItemsChecklist(exportPayload);
+    const ok = await exportFormatter.copyToClipboard(text);
+    setFeedback(ok ? 'Action items copied' : 'Copy failed');
+    setTimeout(() => setFeedback(null), 2200);
+  }
+
+  function handleEmailRecap() {
+    window.location.href = exportFormatter.toMailtoUrl(exportPayload);
+  }
+
+  function handleDownload() {
+    const { txt, filename } = exportFormatter.toTxt(exportPayload);
+    exportFormatter.triggerDownload(txt, filename);
+    setFeedback('Download started');
+    setTimeout(() => setFeedback(null), 2200);
+  }
+
+  const actions = [
+    {
+      id: 'copy-recap',
+      label: 'Copy recap',
+      sub: 'Summary + action items',
+      onClick: () => void handleCopyRecap(),
+    },
+    {
+      id: 'email',
+      label: 'Email recap',
+      sub: 'Opens your mail app',
+      onClick: handleEmailRecap,
+    },
+    {
+      id: 'actions',
+      label: 'Copy tasks',
+      sub: 'Checklist for your tools',
+      onClick: () => void handleCopyActions(),
+    },
+    {
+      id: 'download',
+      label: 'Download .txt',
+      sub: 'Full session export',
+      onClick: handleDownload,
+    },
+  ] as const;
+
+  return (
+    <div
+      className={cn(
+        'rounded-[var(--nl-radius-md)] border border-[var(--nl-color-accent-border)]',
+        'bg-[var(--nl-color-accent-subtle)]',
+        className,
+      )}
+    >
+      <div className={cn('flex items-start gap-3', compact ? 'px-4 py-3' : 'px-5 py-4')}>
+        <div className="flex-1 min-w-0">
+          <p className="text-[12px] font-sans font-medium text-[var(--nl-color-ink-primary)]">
+            Turn this meeting into action
+          </p>
+          <p className="text-[10px] font-mono text-[var(--nl-color-ink-tertiary)] mt-0.5 leading-relaxed">
+            Share recap, copy next steps, or keep digging with Ask notes — no bot required.
+          </p>
+        </div>
+        {onDismiss && (
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="text-[var(--nl-color-ink-disabled)] hover:text-[var(--nl-color-ink-tertiary)] shrink-0"
+            aria-label="Dismiss"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        )}
+      </div>
+
+      <div className={cn(
+        'grid gap-2 border-t border-[var(--nl-color-accent-border)]',
+        compact ? 'px-4 py-3 grid-cols-2 sm:grid-cols-4' : 'px-5 py-4 grid-cols-2 lg:grid-cols-4',
+      )}>
+        {actions.map((action) => (
+          <button
+            key={action.id}
+            type="button"
+            onClick={() => void withFeedback(action.label, action.onClick)}
+            className={cn(
+              'text-left px-3 py-2.5 rounded-[var(--nl-radius-md)]',
+              'bg-[var(--nl-color-paper-base)] border border-[var(--nl-border-subtle)]',
+              'hover:border-[var(--nl-color-accent-border)] transition-colors',
+            )}
+          >
+            <span className="block text-[11px] font-mono font-medium text-[var(--nl-color-ink-primary)]">
+              {action.label}
+            </span>
+            <span className="block text-[9px] font-mono text-[var(--nl-color-ink-disabled)] mt-0.5">
+              {action.sub}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <div className={cn(
+        'flex flex-wrap items-center gap-3 border-t border-[var(--nl-color-accent-border)]',
+        compact ? 'px-4 py-2.5' : 'px-5 py-3',
+      )}>
+        {onAskNotes && (
+          <button
+            type="button"
+            onClick={onAskNotes}
+            className="text-[11px] font-mono font-medium text-[var(--nl-color-accent-primary)] hover:underline"
+          >
+            Ask follow-up questions →
+          </button>
+        )}
+        {feedback && (
+          <span className="text-[10px] font-mono text-[var(--nl-color-accent-primary)] ml-auto">
+            {feedback}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}

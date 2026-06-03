@@ -10,11 +10,12 @@ Noteleaf sits open on your laptop while you meet — in a conference room, on a 
 
 | Artifact | Description |
 |---|---|
-| **Live transcript bar** | Partial speech shown word-by-word as you speak |
+| **Live transcript bar** | Partial speech with a visible “Transcription active” indicator |
 | **Note cards** | Each finalised sentence classified as action / decision / insight / note |
 | **Timestamped transcript** | Verbatim record of every segment with meeting-relative timestamps |
 | **Meeting recap** | AI-generated summary with overview, decisions, action items, and insights |
-| **Ask my notes** | Chat with the session's notes and transcript — every answer cites its source |
+| **Ask my notes** | Chat with the session — works **during** and after the meeting, with source citations |
+| **Post-meeting workflows** | Copy recap, email draft, task checklist, export, and follow-up questions |
 
 ---
 
@@ -47,51 +48,63 @@ Classification runs instantly in the browser with zero server round-trip. The no
 
 When you press stop, Noteleaf sends all captured notes and a portion of the raw transcript to **NVIDIA Nemotron 3 Super** via the Noteleaf API. The model returns a structured recap with overview, decisions, action items, and insights. The NVIDIA key never reaches the browser — all AI calls are proxied through the API server.
 
-### 5. Ask my notes — session-scoped chat with citations
+### 5. Ask my notes — live or after the meeting
 
-Open the **Ask notes** tab to chat with the session. Ask anything about the meeting and the AI answers using only the notes and transcript from that session. Every claim is backed by an inline citation (`[1]`, `[2]`) pointing to the exact source.
+Open the **Ask notes** tab anytime after speech is captured — including **while recording is still in progress**. The AI uses finalized notes, transcript segments, and your current partial speech. Every answer cites its source (`[1]`, `[2]`, …). Chat history is kept per session.
 
-### 6. Sessions are stored in your account
+### 6. Sessions sync to your account
 
-Every session is saved to the database and linked to your account. You can access all past sessions from any browser after signing in. After recording stops, a banner offers a local `.txt` download if you want a copy on your device.
+Every session is saved to the database and linked to your account. You can access all past sessions from any browser after signing in.
+
+### 7. Turn meetings into action
+
+After recording stops, use **post-meeting workflows** to copy a recap, open an email draft, copy action items as a checklist, download a `.txt` export, or jump to Ask notes for follow-ups.
 
 ---
 
 ## Authentication
 
-Noteleaf uses **JWT access tokens** (1 hour) and **refresh tokens** (30 days, rotated on each use). Sign in with either:
+Noteleaf uses **httpOnly cookie auth** — tokens never touch JavaScript memory.
+
+| Token | Storage | Lifetime |
+|---|---|---|
+| Access token (`nl_access`) | httpOnly cookie | 15 minutes |
+| Refresh token (`nl_refresh`) | httpOnly cookie | 30 days, rotated on each use |
+
+Sign in with either:
 
 - **Google** — one click, no code entry required.
 - **Email OTP** — enter your email, receive a 6-digit code, paste it in. Codes expire in 10 minutes and are single-use.
 
-There are no passwords. Tokens are stored in `localStorage`. The refresh token is revoked on sign-out.
+There are no passwords. Refresh tokens are revoked on sign-out and cascade-deleted when an account is removed.
 
 ---
 
 ## User guide
 
-### Getting started
+### Before the meeting
 
-1. Open the app in Chrome or Edge.
+1. Open the app in **Chrome or Edge**.
 2. Sign in with Google or your email address.
-3. Click **+ New Session** in the sidebar.
-4. Click the mic button at the bottom. Allow microphone access when prompted.
-5. Start talking. Note cards appear as you speak.
+3. Click **+ New Session** in the sidebar (or use an existing one).
+4. Open Noteleaf beside your call — Zoom, Teams, Google Meet, or an in-person conversation. The **Before → During → After** guide under the tabs shows where you are in the flow.
 
-### During a meeting
+### During the meeting
 
-- The live transcript bar shows partial speech in real time.
-- Each finalised sentence becomes a note card with its type badge, capture time, content, and keyword tags.
-- Click the session title at the top to name the session — it saves automatically on blur.
-- Click the pencil icon on any note card to edit its content or reclassify its type.
+1. Click the mic button. Allow microphone access when prompted.
+2. Speak naturally. A **Transcription active** indicator appears in the live transcript bar.
+3. Note cards appear as speech is finalized (action / decision / insight / note).
+4. Switch to **Ask notes** anytime — ask what’s been discussed so far while the meeting continues.
+5. Click the session title to name it — saves automatically on blur.
+6. Click the pencil icon on any note to edit content or reclassify its type.
 
 ### After recording stops
 
-- The AI recap generates automatically (5–15 seconds). A dot indicator appears on the Summary tab.
-- A download banner appears — click **Download .txt** to save a local copy, or dismiss it.
-- Switch to **Transcript** for the full verbatim record.
-- Switch to **Ask notes** to chat with the session content.
-- Click **Export** in the top right at any time to download a `.txt` file.
+1. The **Recap** tab generates automatically (5–15 seconds). A dot appears on the tab while loading.
+2. Use **post-meeting workflows** — copy recap, email draft, copy tasks, download `.txt`, or ask follow-ups.
+3. Switch to **Transcript** for the full verbatim record.
+4. Switch to **Ask notes** for deeper Q&A with citations.
+5. Click **Export** in the header at any time for a full session download.
 
 ### Managing sessions
 
@@ -245,20 +258,31 @@ Root `.env` (used by Docker Compose):
 
 ---
 
-### Running tests
+### Running tests and validation
 
 ```bash
-# All tests
+# Full monorepo pipeline (requires Node 20+, npm 10+)
+npm run type-check
+npm run lint
 npm run test
+npm run build
 
-# Web unit tests only (Vitest)
+# Individual apps
 cd apps/web && npm run test
-
-# Watch mode
-cd apps/web && npm run test:watch
+cd apps/api && npm run test
 ```
 
-The note classifier has the broadest coverage — 27 tests covering all four types, edge cases, tag extraction, and the full note-building pipeline.
+The web app includes unit tests for the note classifier (27 tests). API and web Vitest configs use `passWithNoTests: true` so optional smoke-test folders can be removed without breaking CI.
+
+---
+
+### Linting
+
+ESLint 9 flat config lives at the repo root (`eslint.config.mjs`). Each app runs `eslint src` via Turbo:
+
+```bash
+npm run lint
+```
 
 ---
 
@@ -281,9 +305,11 @@ The two apps share no runtime code — only types, through `@noteleaf/shared-typ
 
 ### Request authentication
 
-Every protected API route reads an `Authorization: Bearer <token>` header. The token is a signed JWT (HS256, 1-hour expiry) produced at sign-in. The API verifies the signature, extracts the `userId`, and scopes all DB queries to that user.
+Protected API routes read the **`nl_access` httpOnly cookie** (or `Authorization: Bearer` for programmatic clients). The token is a signed JWT (HS256, 15-minute expiry) produced at sign-in. The API verifies the signature, extracts the `userId`, and scopes all DB queries to that user.
 
-When a token expires, the client transparently calls `POST /api/auth/refresh` with the stored refresh token to get a new pair. Refresh tokens are rotated on every use, stored as SHA-256 hashes in the database, and revoked on sign-out. Deleting an account cascade-deletes all refresh tokens, sessions, and OTP codes.
+When the access token expires, the client calls `POST /api/auth/refresh` with the `nl_refresh` cookie. Refresh tokens are rotated on every use, stored as SHA-256 hashes in the database, and revoked on sign-out. Deleting an account cascade-deletes all refresh tokens, sessions, and OTP codes.
+
+Next.js rewrites `/api/*` to the Fastify server, so browser requests are same-origin and cookies are sent automatically (`credentials: 'include'`).
 
 ---
 

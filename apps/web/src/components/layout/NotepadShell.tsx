@@ -6,6 +6,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 // Feature components
 import Link from 'next/link';
 import { ChatPanel } from '@/features/chat/ChatPanel';
+import { MeetingPhaseGuide } from '@/features/meeting/components/MeetingPhaseGuide';
+import { PostMeetingActions } from '@/features/meeting/components/PostMeetingActions';
 import { NavigationSidebar } from '@/components/layout/NavigationSidebar';
 import { SessionTranscriptPanel } from '@/components/layout/SessionTranscriptPanel';
 import { LiveTranscriptBar } from '@/features/recording/components/LiveTranscriptBar';
@@ -28,8 +30,14 @@ import { useAuthStore } from '@/store/auth.store';
 
 // Services
 import { sessionsApi } from '@/features/sessions/sessions.api';
-import { http } from '@/lib/http.client';
+import { http, HttpError } from '@/lib/http.client';
 import { exportFormatter } from '@/lib/exportFormatter';
+import {
+  hasSummarizeContext,
+  notesForSummarize,
+  segmentsForSummarize,
+  hasChatContext,
+} from '@/lib/sessionContext';
 
 // Types
 import type { AiSummary, SummarizeRequest, TranscriptSegment, NoteType } from '@noteleaf/shared-types';
@@ -93,7 +101,6 @@ function SettingsPanel() {
           {user && (
             <div className="flex items-center gap-3 px-3 py-2.5 rounded-[var(--nl-radius-md)] bg-[var(--nl-color-paper-sunken)] border border-[var(--nl-border-subtle)]">
               {user.avatar && (
-                // eslint-disable-next-line @next/next/no-img-element
                 <img src={user.avatar} alt="" className="w-7 h-7 rounded-full shrink-0" />
               )}
               <div className="min-w-0">
@@ -311,21 +318,18 @@ export function NotepadShell() {
     const transcript         = options?.transcript ?? activeTranscript;
     const transcriptSegments = options?.transcriptSegments ?? activeTranscriptSegments;
 
-    if (!sessionId || (notes.length === 0 && transcriptSegments.length === 0 && !transcript.trim())) return undefined;
+    if (!sessionId || !hasSummarizeContext(notes, transcript, transcriptSegments)) return undefined;
     setAiState('loading');
 
     try {
+      const apiNotes = notesForSummarize(notes);
+      const apiSegments = segmentsForSummarize(transcriptSegments);
+
       const summary = await http.post<AiSummary>('/api/ai/summarize', {
         sessionId,
-        notes: notes.map((n) => ({ type: n.type, content: n.content, capturedAt: n.capturedAt })),
+        notes: apiNotes,
         transcriptExcerpt: transcript.slice(0, 1500),
-        transcriptSegments: transcriptSegments
-          .slice(0, 80)
-          .map((seg) => ({
-            text: seg.text,
-            startOffsetSeconds: seg.startOffsetSeconds,
-            endOffsetSeconds: seg.endOffsetSeconds,
-          })),
+        transcriptSegments: apiSegments.slice(0, 80),
         sessionTitle: options?.sessionTitle ?? activeItem?.title,
       } satisfies SummarizeRequest);
 
@@ -333,7 +337,11 @@ export function NotepadShell() {
       setAiState('success');
       setTimeout(() => notesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       return summary;
-    } catch {
+    } catch (err) {
+      console.error(
+        '[AI summarize]',
+        err instanceof HttpError ? err.apiError.message : err,
+      );
       setAiState('error');
       return undefined;
     }
@@ -436,6 +444,17 @@ export function NotepadShell() {
 
   const isRecording = recordingStatus === 'recording';
 
+  const hasSessionContent =
+    activeNotes.length > 0 ||
+    activeTranscriptSegments.length > 0 ||
+    activeTranscript.trim().length > 0;
+
+  const chatReady = hasChatContext(activeNotes, activeTranscriptSegments, {
+    liveTranscript,
+    fullTranscript: activeTranscript,
+    isRecording,
+  });
+
   function formatDuration(secs: number): string {
     const m = Math.floor(secs / 60);
     const s = secs % 60;
@@ -451,9 +470,25 @@ export function NotepadShell() {
   const SESSION_TABS: { id: ActiveTab; label: string }[] = [
     { id: 'notes',      label: 'Notes'      },
     { id: 'transcript', label: 'Transcript' },
-    { id: 'summary',    label: 'Summary'    },
+    { id: 'summary',    label: 'Recap'      },
     { id: 'chat',       label: 'Ask notes'  },
   ];
+
+  const sessionExportInput = useMemo(() => ({
+    title: activeItem?.title ?? '',
+    notes: activeNotes,
+    transcript: activeTranscript,
+    transcriptSegments: activeTranscriptSegments,
+    aiSummary,
+    durationSeconds: elapsedSeconds,
+  }), [
+    activeItem?.title,
+    activeNotes,
+    activeTranscript,
+    activeTranscriptSegments,
+    aiSummary,
+    elapsedSeconds,
+  ]);
 
   // ── Render ─────────────────────────────────────────────────────────────
 
@@ -557,9 +592,24 @@ export function NotepadShell() {
                     {id === 'summary' && aiState === 'loading' && activeTab !== 'summary' && (
                       <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-[var(--nl-color-ink-disabled)] animate-pulse" aria-label="Generating summary" />
                     )}
+                    {id === 'chat' && chatReady && activeTab !== 'chat' && (
+                      <span
+                        className={cn(
+                          'absolute top-2 right-2 w-1.5 h-1.5 rounded-full',
+                          isRecording ? 'bg-red-500 animate-pulse' : 'bg-[var(--nl-color-accent-primary)]',
+                        )}
+                        aria-label={isRecording ? 'Live — ready to ask' : 'Ready to ask'}
+                      />
+                    )}
                   </button>
                 ))}
               </nav>
+
+              <MeetingPhaseGuide
+                isRecording={isRecording}
+                hasSessionContent={hasSessionContent}
+                recordingStatus={recordingStatus}
+              />
             </header>
 
             {/* Tab content */}
@@ -570,26 +620,15 @@ export function NotepadShell() {
                 <>
                   <div className="flex flex-col flex-1 min-w-0">
 
-                    {/* Download banner — appears after recording stops */}
-                    {showDownloadBanner && (
-                      <div className="mx-5 mt-3 shrink-0 flex items-center gap-3 px-4 py-2.5 rounded-[var(--nl-radius-md)] bg-[var(--nl-color-accent-subtle)] border border-[var(--nl-color-accent-border)]">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--nl-color-accent-primary)] shrink-0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        <p className="text-[12px] font-mono text-[var(--nl-color-ink-secondary)] flex-1">Session saved. Download a local copy?</p>
-                        <button
-                          type="button"
-                          onClick={handleExport}
-                          className="text-[11px] font-mono font-medium text-[var(--nl-color-accent-primary)] hover:underline shrink-0"
-                        >
-                          Download .txt
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowDownloadBanner(false)}
-                          className="text-[var(--nl-color-ink-disabled)] hover:text-[var(--nl-color-ink-tertiary)] shrink-0"
-                          aria-label="Dismiss"
-                        >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                        </button>
+                    {/* Post-meeting workflows — appears after recording stops */}
+                    {showDownloadBanner && hasSessionContent && (
+                      <div className="mx-5 mt-3 shrink-0">
+                        <PostMeetingActions
+                          {...sessionExportInput}
+                          compact
+                          onDismiss={() => setShowDownloadBanner(false)}
+                          onAskNotes={() => setActiveTab('chat')}
+                        />
                       </div>
                     )}
 
@@ -634,7 +673,9 @@ export function NotepadShell() {
                               </div>
                               <div className="text-center">
                                 <p className="font-serif text-[18px] text-[var(--nl-color-ink-tertiary)] mb-1">Ready to capture</p>
-                                <p className="text-[12px] font-mono text-[var(--nl-color-ink-disabled)] max-w-[220px] leading-relaxed">Tap the mic and start talking. Notes appear here as you speak.</p>
+                                <p className="text-[12px] font-mono text-[var(--nl-color-ink-disabled)] max-w-[260px] leading-relaxed">
+                                  Open Noteleaf beside your meeting — Zoom, Teams, Meet, or in person. Tap the mic and focus on the conversation, not the notes.
+                                </p>
                               </div>
                             </div>
                           ) : (
@@ -700,13 +741,13 @@ export function NotepadShell() {
                       <div className="flex-1 min-w-0">
                         <p className="text-[13px] font-sans text-[var(--nl-color-ink-secondary)] truncate">
                           {recordingStatus === 'idle'
-                            ? 'Tap to start listening'
+                            ? 'Tap to start — works with any meeting on this device'
                             : recordingStatus === 'connecting'
                             ? 'Connecting…'
                             : recordingStatus === 'recording'
-                            ? 'Listening — speak clearly'
+                            ? 'Capturing live — switch to Ask notes anytime'
                             : recordingStatus === 'stopping'
-                            ? 'Wrapping up…'
+                            ? 'Generating recap…'
                             : 'Something went wrong'}
                         </p>
                         <p className="text-[10px] font-mono text-[var(--nl-color-ink-disabled)] mt-0.5">
@@ -758,27 +799,41 @@ export function NotepadShell() {
               {/* ── Summary tab ─────────────────────────────────────── */}
               {activeTab === 'summary' && (
                 <div className="flex-1 overflow-y-auto px-8 py-6">
-                  <div className="max-w-2xl mx-auto">
+                  <div className="max-w-2xl mx-auto space-y-6">
                     {aiState === 'idle' ? (
                       <div className="text-center mt-16 space-y-3">
-                        <p className="font-serif text-[18px] text-[var(--nl-color-ink-tertiary)]">No summary yet</p>
-                        <p className="text-[12px] font-mono text-[var(--nl-color-ink-disabled)]">Record a session and the AI summary will appear here automatically.</p>
+                        <p className="font-serif text-[18px] text-[var(--nl-color-ink-tertiary)]">No recap yet</p>
+                        <p className="text-[12px] font-mono text-[var(--nl-color-ink-disabled)] max-w-sm mx-auto leading-relaxed">
+                          After you stop recording, Noteleaf turns your notes and transcript into a summary with key takeaways and action items.
+                        </p>
                       </div>
                     ) : (
-                      <AiSummaryCard state={aiState} summary={aiSummary} onRetry={() => void generateAiNotes()} />
+                      <>
+                        <AiSummaryCard state={aiState} summary={aiSummary} onRetry={() => void generateAiNotes()} />
+                        {aiState === 'success' && hasSessionContent && (
+                          <PostMeetingActions
+                            {...sessionExportInput}
+                            onAskNotes={() => setActiveTab('chat')}
+                          />
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
               )}
 
               {/* ── Chat tab ────────────────────────────────────────── */}
-              {activeTab === 'chat' && (
+              <div className={cn('flex flex-1 min-h-0', activeTab !== 'chat' && 'hidden')}>
                 <ChatPanel
+                  sessionId={activeSessionId}
                   notes={activeNotes}
                   transcriptSegments={activeTranscriptSegments}
+                  fullTranscript={activeTranscript}
+                  liveTranscript={liveTranscript}
+                  isRecording={isRecording}
                   sessionTitle={activeItem?.title ?? ''}
                 />
-              )}
+              </div>
 
             </div>
           </>

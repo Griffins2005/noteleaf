@@ -17,7 +17,11 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: false,
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    passWithNoTests: true,
+    include: [
+      'src/**/*.{test,spec}.{ts,tsx}',
+      'smoke-tests/**/*.{test,spec}.{ts,tsx}',
+    ],
   },
   resolve: {
     alias: {

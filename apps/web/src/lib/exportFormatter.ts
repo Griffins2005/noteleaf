@@ -332,6 +332,89 @@ function toMarkdown(input: ExportInput): ExportOutput {
   return { txt: lines.join('\n'), filename };
 }
 
+/**
+ * Plain-text recap for clipboard or email — overview, decisions, actions, insights.
+ */
+function toRecapPlainText(input: ExportInput): string {
+  const { title, notes, aiSummary, durationSeconds } = input;
+  const displayTitle = title || 'Untitled Session';
+  const lines: string[] = [];
+
+  lines.push(`Meeting recap: ${displayTitle}`);
+  lines.push(`Duration: ${formatDuration(durationSeconds)}`);
+  lines.push('');
+
+  if (aiSummary?.overview) {
+    lines.push('SUMMARY');
+    lines.push(aiSummary.overview);
+    lines.push('');
+  }
+
+  const actionItems = aiSummary?.actionItems.length
+    ? aiSummary.actionItems
+    : notes.filter((n) => n.type === 'action').map((n) => n.content);
+
+  if (actionItems.length > 0) {
+    lines.push('ACTION ITEMS');
+    actionItems.forEach((item) => lines.push(`☐ ${item}`));
+    lines.push('');
+  }
+
+  const decisions = aiSummary?.decisions.length
+    ? aiSummary.decisions
+    : notes.filter((n) => n.type === 'decision').map((n) => n.content);
+
+  if (decisions.length > 0) {
+    lines.push('DECISIONS');
+    decisions.forEach((item) => lines.push(`• ${item}`));
+    lines.push('');
+  }
+
+  const insights = aiSummary?.insights.length
+    ? aiSummary.insights
+    : notes.filter((n) => n.type === 'insight').map((n) => n.content);
+
+  if (insights.length > 0) {
+    lines.push('KEY TAKEAWAYS');
+    insights.forEach((item) => lines.push(`• ${item}`));
+    lines.push('');
+  }
+
+  lines.push('—');
+  lines.push('Captured with Noteleaf (ambient AI notetaker — no meeting bot)');
+
+  return lines.join('\n');
+}
+
+/** Markdown checklist of action items — paste into task tools. */
+function toActionItemsChecklist(input: ExportInput): string {
+  const { notes, aiSummary } = input;
+  const items = aiSummary?.actionItems.length
+    ? aiSummary.actionItems
+    : notes.filter((n) => n.type === 'action').map((n) => n.content);
+
+  if (items.length === 0) return 'No action items captured in this session.';
+  return items.map((item) => `- [ ] ${item}`).join('\n');
+}
+
+function toMailtoUrl(input: ExportInput, recipient = ''): string {
+  const displayTitle = input.title || 'Untitled Session';
+  const subject = encodeURIComponent(`Meeting recap: ${displayTitle}`);
+  const body = encodeURIComponent(toRecapPlainText(input));
+  const to = recipient ? encodeURIComponent(recipient) : '';
+  return `mailto:${to}?subject=${subject}&body=${body}`;
+}
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  if (typeof navigator === 'undefined' || !navigator.clipboard) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ─── DOM / File System actions ────────────────────────────────────────────────
 
 /**
@@ -376,6 +459,10 @@ async function saveToFolder(
 export const exportFormatter = {
   toTxt,
   toMarkdown,
+  toRecapPlainText,
+  toActionItemsChecklist,
+  toMailtoUrl,
+  copyToClipboard,
   triggerDownload,
   saveToFolder,
 };

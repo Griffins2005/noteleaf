@@ -29,7 +29,7 @@ function StoreHydrator() {
   const initAuthStore = useAuthStore((state) => state.initAuthStore);
 
   useEffect(() => {
-    initAuthStore();
+    void initAuthStore();
     initUserStore();
   }, [initAuthStore, initUserStore]);
 

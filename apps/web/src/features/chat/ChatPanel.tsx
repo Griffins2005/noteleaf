@@ -2,15 +2,20 @@
 
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { http } from '@/lib/http.client';
+import { http, HttpError } from '@/lib/http.client';
+import { notesForChat, segmentsForChat } from '@/lib/sessionContext';
 import { cn } from '@/lib/cn';
 import type { ChatMessage, ChatCitation, AskNotesResponse, Note, TranscriptSegment } from '@noteleaf/shared-types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ChatPanelProps {
+  sessionId: string | null;
   notes: Note[];
   transcriptSegments: TranscriptSegment[];
+  fullTranscript?: string;
+  liveTranscript?: string;
+  isRecording?: boolean;
   sessionTitle: string;
 }
 
@@ -147,15 +152,53 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
 // ─── Main panel ───────────────────────────────────────────────────────────────
 
-export function ChatPanel({ notes, transcriptSegments, sessionTitle }: ChatPanelProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+export function ChatPanel({
+  sessionId,
+  notes,
+  transcriptSegments,
+  fullTranscript = '',
+  liveTranscript = '',
+  isRecording = false,
+  sessionTitle,
+}: ChatPanelProps) {
+  const [messagesBySession, setMessagesBySession] = useState<Record<string, ChatMessage[]>>({});
   const [input, setInput]       = useState('');
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState<string | null>(null);
   const bottomRef               = useRef<HTMLDivElement>(null);
   const inputRef                = useRef<HTMLTextAreaElement>(null);
 
-  const hasContext = notes.length > 0 || transcriptSegments.length > 0;
+  const chatKey = sessionId ?? '';
+  const messages = messagesBySession[chatKey] ?? [];
+
+  const contextOptions = {
+    liveTranscript,
+    fullTranscript,
+    isRecording,
+  };
+
+  const apiNotes = useMemo(() => notesForChat(notes), [notes]);
+  const apiSegments = useMemo(
+    () => segmentsForChat(transcriptSegments, contextOptions),
+    [transcriptSegments, liveTranscript, fullTranscript, isRecording],
+  );
+  const hasContext = apiNotes.length > 0 || apiSegments.length > 0;
+
+  const setSessionMessages = (
+    updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[]),
+  ) => {
+    if (!chatKey) return;
+    setMessagesBySession((prev) => {
+      const current = prev[chatKey] ?? [];
+      const next = typeof updater === 'function' ? updater(current) : updater;
+      return { ...prev, [chatKey]: next };
+    });
+  };
+
+  useEffect(() => {
+    setInput('');
+    setError(null);
+  }, [chatKey]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -172,7 +215,7 @@ export function ChatPanel({ notes, transcriptSegments, sessionTitle }: ChatPanel
       timestamp: new Date().toISOString(),
     };
 
-    setMessages((prev) => [...prev, userMsg]);
+    setSessionMessages((prev) => [...prev, userMsg]);
     setInput('');
     setLoading(true);
     setError(null);
@@ -183,14 +226,8 @@ export function ChatPanel({ notes, transcriptSegments, sessionTitle }: ChatPanel
     try {
       const res = await http.post<AskNotesResponse>('/api/chat/ask', {
         question: q,
-        notes: notes.map((n) => ({
-          id: n.id, type: n.type, content: n.content, capturedAt: n.capturedAt,
-        })),
-        transcriptSegments: transcriptSegments.map((s) => ({
-          id: s.id, text: s.text,
-          startOffsetSeconds: s.startOffsetSeconds,
-          endOffsetSeconds: s.endOffsetSeconds,
-        })),
+        notes: apiNotes,
+        transcriptSegments: apiSegments,
         history,
       });
 
@@ -201,9 +238,14 @@ export function ChatPanel({ notes, transcriptSegments, sessionTitle }: ChatPanel
         citations: res.citations,
         timestamp: new Date().toISOString(),
       };
-      setMessages((prev) => [...prev, assistantMsg]);
+      setSessionMessages((prev) => [...prev, assistantMsg]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to get answer.');
+      const message = err instanceof HttpError
+        ? err.apiError.message
+        : err instanceof Error
+          ? err.message
+          : 'Failed to get answer.';
+      setError(message);
     } finally {
       setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 50);
@@ -222,6 +264,11 @@ export function ChatPanel({ notes, transcriptSegments, sessionTitle }: ChatPanel
   const suggestedQuestions = useMemo((): string[] => {
     const qs: string[] = [];
 
+    if (isRecording) {
+      qs.push('What has been discussed so far?');
+      qs.push('Any action items or decisions mentioned yet?');
+    }
+
     // Helper: trim a string to a readable snippet (≤ 40 chars)
     const snippet = (s: string, maxWords = 6) => {
       const words = s.replace(/^(we need to|we should|we have to|can you|could you|please|let's)\s+/i, '').trim().split(/\s+/);
@@ -234,7 +281,7 @@ export function ChatPanel({ notes, transcriptSegments, sessionTitle }: ChatPanel
     const insights  = notes.filter((n) => n.type === 'insight');
 
     // Question from the first action item
-    if (actions[0]) {
+    if (actions[0] && qs.length < 3) {
       qs.push(`Who is responsible for "${snippet(actions[0].content)}"?`);
     }
 
@@ -260,18 +307,20 @@ export function ChatPanel({ notes, transcriptSegments, sessionTitle }: ChatPanel
     }
 
     // Generic last-resort (only if we still don't have 3)
-    const generic = [
-      'What were the main outcomes of this session?',
-      'Were any deadlines or timelines mentioned?',
-      'What open questions remain unresolved?',
-    ];
+    const generic = isRecording
+      ? ['What open questions came up?', 'Summarise the last few minutes.']
+      : [
+          'What were the main outcomes of this session?',
+          'Were any deadlines or timelines mentioned?',
+          'What open questions remain unresolved?',
+        ];
     for (const g of generic) {
       if (qs.length >= 3) break;
-      qs.push(g);
+      if (!qs.includes(g)) qs.push(g);
     }
 
     return qs.slice(0, 3);
-  }, [notes, transcriptSegments]);
+  }, [notes, transcriptSegments, isRecording]);
 
   // ── Empty state ─────────────────────────────────────────────────────────────
 
@@ -279,16 +328,22 @@ export function ChatPanel({ notes, transcriptSegments, sessionTitle }: ChatPanel
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 px-8 py-16 text-center">
         <div className="w-14 h-14 rounded-full bg-[var(--nl-color-paper-sunken)] flex items-center justify-center">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--nl-color-ink-disabled)]">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-          </svg>
+          {isRecording ? (
+            <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" aria-hidden="true" />
+          ) : (
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--nl-color-ink-disabled)]">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+          )}
         </div>
         <div>
           <p className="font-serif text-[17px] text-[var(--nl-color-ink-tertiary)] mb-1">
-            No notes to chat with yet
+            {isRecording ? 'Listening…' : 'No notes to chat with yet'}
           </p>
-          <p className="text-[12px] font-mono text-[var(--nl-color-ink-disabled)] leading-relaxed">
-            Record a session first. Once you have notes and a transcript, come back here to ask questions.
+          <p className="text-[12px] font-mono text-[var(--nl-color-ink-disabled)] leading-relaxed max-w-xs">
+            {isRecording
+              ? 'Start speaking — context appears here within a few seconds. You can ask questions while the meeting continues.'
+              : 'Record a session first. Once speech is captured, come back here to ask questions.'}
           </p>
         </div>
       </div>
@@ -307,14 +362,22 @@ export function ChatPanel({ notes, transcriptSegments, sessionTitle }: ChatPanel
             {sessionTitle || 'Untitled session'}
           </p>
           <p className="text-[10px] font-mono text-[var(--nl-color-ink-disabled)] mt-0.5">
-            {notes.length} {notes.length === 1 ? 'note' : 'notes'}
-            {transcriptSegments.length > 0 && ` · ${transcriptSegments.length} transcript segments`}
+            {apiNotes.length} {apiNotes.length === 1 ? 'note' : 'notes'}
+            {apiSegments.length > 0 && ` · ${apiSegments.length} transcript sources`}
+            {isRecording && liveTranscript.trim() && ' · live speech'}
           </p>
         </div>
-        <span className="flex items-center gap-1 text-[10px] font-mono text-[var(--nl-color-accent-primary)] border border-[var(--nl-color-accent-border)] bg-[var(--nl-color-accent-subtle)] px-2 py-1 rounded-full">
-          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="4"/></svg>
-          session-scoped
-        </span>
+        {isRecording ? (
+          <span className="flex items-center gap-1.5 text-[10px] font-mono text-red-600 border border-red-200 bg-red-50 px-2 py-1 rounded-full shrink-0">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" aria-hidden="true" />
+            live
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 text-[10px] font-mono text-[var(--nl-color-accent-primary)] border border-[var(--nl-color-accent-border)] bg-[var(--nl-color-accent-subtle)] px-2 py-1 rounded-full shrink-0">
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="4"/></svg>
+            session-scoped
+          </span>
+        )}
       </div>
 
       {/* Message list */}
@@ -324,8 +387,13 @@ export function ChatPanel({ notes, transcriptSegments, sessionTitle }: ChatPanel
         {messages.length === 0 && (
           <div className="text-center py-8 space-y-3">
             <p className="font-serif text-[16px] text-[var(--nl-color-ink-tertiary)]">
-              Ask anything about this meeting
+              {isRecording ? 'Ask while the meeting is in progress' : 'Ask anything about this meeting'}
             </p>
+            {isRecording && (
+              <p className="text-[11px] font-mono text-[var(--nl-color-ink-disabled)] max-w-sm mx-auto leading-relaxed">
+                Answers use everything captured so far, including speech still being transcribed.
+              </p>
+            )}
             <div className="flex flex-col gap-2 max-w-xs mx-auto">
               {suggestedQuestions.map((q) => (
                 <button
@@ -392,7 +460,7 @@ export function ChatPanel({ notes, transcriptSegments, sessionTitle }: ChatPanel
               e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
             }}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about this meeting… (Enter to send)"
+            placeholder={isRecording ? 'Ask about what\'s been said so far…' : 'Ask about this meeting… (Enter to send)'}
             rows={1}
             disabled={loading}
             className={cn(
@@ -422,7 +490,9 @@ export function ChatPanel({ notes, transcriptSegments, sessionTitle }: ChatPanel
           </button>
         </div>
         <p className="text-[9px] font-mono text-[var(--nl-color-ink-disabled)] mt-1.5 px-1">
-          Answers are grounded in this session only · every claim cites the exact source
+          {isRecording
+            ? 'Context updates live as you speak · answers cite captured sources only'
+            : 'Answers are grounded in this session only · every claim cites the exact source'}
         </p>
       </div>
     </div>

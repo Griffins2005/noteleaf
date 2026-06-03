@@ -35,7 +35,7 @@ export function SignInPage() {
   const searchParams = useSearchParams();
   const setAuth      = useAuthStore((s) => s.setAuth);
   const isInit       = useAuthStore((s) => s.isInitialized);
-  const token        = useAuthStore((s) => s.token);
+  const user         = useAuthStore((s) => s.user);
 
   const [email,     setEmail]     = useState('');
   const [code,      setCode]      = useState('');
@@ -48,27 +48,18 @@ export function SignInPage() {
 
   // Redirect if already authenticated
   useEffect(() => {
-    if (isInit && token) router.replace('/');
-  }, [isInit, token, router]);
+    if (isInit && user) router.replace('/');
+  }, [isInit, user, router]);
 
-  // Pick up tokens from Google OAuth redirect (?token=...&refreshToken=...)
+  // Handle Google OAuth errors redirected back to /auth
   useEffect(() => {
-    const urlToken        = searchParams.get('token');
-    const urlRefreshToken = searchParams.get('refreshToken');
-    const urlError        = searchParams.get('error');
-
-    if (urlToken) {
-      setAuth(urlToken, urlRefreshToken ?? '');
-      router.replace('/');
-      return;
-    }
-
+    const urlError = searchParams.get('error');
     if (urlError === 'google_cancelled') {
       setError('Google sign-in was cancelled.');
     } else if (urlError === 'google_failed') {
       setError('Google sign-in failed. Please try again.');
     }
-  }, [searchParams, setAuth, router]);
+  }, [searchParams]);
 
   // Focus code input when it appears
   useEffect(() => {
@@ -85,6 +76,7 @@ export function SignInPage() {
     const res = await fetch('/api/auth/email/send', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body:    JSON.stringify({ email }),
     });
 
@@ -109,23 +101,23 @@ export function SignInPage() {
     const res = await fetch('/api/auth/email/verify', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body:    JSON.stringify({ email, code }),
     });
 
     const json = (await res.json()) as ApiResp<{
-      token: string;
-      refreshToken: string;
-      user: { id: string; email: string; name: string | null };
+      user: { id: string; email: string | null; name: string | null };
+      tokenExpiresAt: number;
     }>;
 
     setVerifying(false);
 
-    if (!res.ok || !json.success || !json.data?.token) {
+    if (!res.ok || !json.success || !json.data) {
       setError(json.error?.message ?? 'Incorrect code. Please try again.');
       return;
     }
 
-    setAuth(json.data.token, json.data.refreshToken ?? '');
+    setAuth(json.data.user, json.data.tokenExpiresAt);
     router.replace('/');
   }
 
@@ -170,7 +162,7 @@ export function SignInPage() {
               Noteleaf
             </span>
             <p className="text-xs text-[var(--nl-sidebar-text-muted)] mt-0.5">
-              Capture. Understand. Grow.
+              Focus on the conversation — not the notes
             </p>
           </div>
         </div>
@@ -185,7 +177,7 @@ export function SignInPage() {
             <p className="text-xs text-[var(--nl-color-ink-tertiary)] mt-1 leading-relaxed">
               {step === 'sent'
                 ? `We sent a 6-digit code to ${email}`
-                : 'Your notes wait right where you left them.'}
+                : 'AI captures meeting notes from your mic — on calls or in person. No bot joins your meeting.'}
             </p>
           </div>
 
@@ -315,8 +307,8 @@ export function SignInPage() {
       </div>
 
       {/* Tagline below card */}
-      <p className="mt-6 text-xs text-[var(--nl-color-ink-disabled)]">
-        Ambient AI notetaker — listens locally, never joins your meeting.
+      <p className="mt-6 text-xs text-[var(--nl-color-ink-disabled)] text-center max-w-xs leading-relaxed">
+        Ambient AI notetaker — listens through your mic, never joins as a participant.
       </p>
     </div>
   );

@@ -62,15 +62,21 @@ export function useRecordingState(): UseRecordingStateReturn {
     },
 
     onFinalTranscript: (text, startOffsetSeconds, endOffsetSeconds, confidence) => {
+      const trimmed = text.trim();
+      if (!trimmed) {
+        setLiveTranscript('');
+        return;
+      }
+
       setLiveTranscript('');
-      appendTranscript(text);
+      appendTranscript(trimmed);
 
       const activeId = useSessionStore.getState().activeSessionId;
       if (activeId) {
         const segment: TranscriptSegment = {
           id: uuidv4(),
           sessionId: activeId,
-          text,
+          text: trimmed,
           capturedAt: new Date().toISOString(),
           startOffsetSeconds,
           endOffsetSeconds,
@@ -79,7 +85,7 @@ export function useRecordingState(): UseRecordingStateReturn {
         appendTranscriptSegment(segment);
       }
 
-      processTranscriptSegment(text, endOffsetSeconds, confidence, activeId ?? undefined);
+      processTranscriptSegment(trimmed, endOffsetSeconds, confidence, activeId ?? undefined);
     },
 
     onError: (code, message) => {

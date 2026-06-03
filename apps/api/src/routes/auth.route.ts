@@ -4,12 +4,18 @@
  *
  * Routes:
  *   GET  /api/auth/google          → Redirect to Google OAuth consent screen
- *   GET  /api/auth/google/callback → Handle Google callback, issue JWT + refresh token
+ *   GET  /api/auth/google/callback → Handle Google callback, set auth cookies, redirect to /
  *   POST /api/auth/email/send      → Send 6-digit OTP to email (max 3/10 min)
- *   POST /api/auth/email/verify    → Verify OTP (max 5 attempts), issue JWT + refresh token
- *   POST /api/auth/refresh         → Exchange refresh token for a new access + refresh token
- *   POST /api/auth/signout         → Revoke a refresh token
- *   GET  /api/auth/me              → Return current user from JWT
+ *   POST /api/auth/email/verify    → Verify OTP (max 5 attempts), set auth cookies
+ *   POST /api/auth/refresh         → Rotate refresh token cookie, issue new access token cookie
+ *   POST /api/auth/signout         → Revoke refresh token, clear auth cookies
+ *   GET  /api/auth/me              → Return current user from cookie or Bearer token
+ *
+ * Token storage:
+ *   - Access token: nl_access httpOnly cookie, 15-minute lifetime.
+ *   - Refresh token: nl_refresh httpOnly cookie, 30-day lifetime.
+ *   - Tokens never appear in response bodies (except tokenExpiresAt for proactive refresh).
+ *   - Bearer header fallback supported for programmatic/API-key clients.
  *
  * OTP security:
  *   - Codes are hashed (SHA-256 + pepper) before DB storage — raw digits never persisted.
@@ -20,10 +26,9 @@
  *   - Token values are hashed (SHA-256) before DB storage.
  *   - Tokens are rotated on every use (old revoked, new issued).
  *   - Cascade delete on user removal.
- *   - Access tokens are short-lived (1 h); revocation = don't refresh.
  */
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { Resend } from 'resend';
@@ -34,23 +39,25 @@ import {
   generateRefreshToken,
   hashToken,
   hashOtp,
+  ACCESS_TOKEN_TTL_MS,
 } from '../lib/auth.js';
 import { logger } from '../logger.js';
 import type { PrismaClient } from '@prisma/client';
 
-// ─── Config ───────────────────────────────────────────────────────────────────
+// Config
 
 const GOOGLE_CLIENT_ID     = process.env['GOOGLE_CLIENT_ID']     ?? '';
 const GOOGLE_CLIENT_SECRET = process.env['GOOGLE_CLIENT_SECRET'] ?? '';
 const APP_URL              = process.env['APP_URL']              ?? 'http://localhost:3000';
 const API_URL              = process.env['API_URL']              ?? 'http://localhost:3001';
+const IS_PRODUCTION        = process.env['NODE_ENV'] === 'production';
 
 const GOOGLE_REDIRECT_URI = `${API_URL}/api/auth/google/callback`;
 const GOOGLE_AUTH_URL     = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL    = 'https://oauth2.googleapis.com/token';
 const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo';
 
-// ─── Email setup ──────────────────────────────────────────────────────────────
+// Email setup
 
 const resendApiKey = process.env['RESEND_API_KEY'];
 const fromEmail    = process.env['FROM_EMAIL'] ?? 'Noteleaf <onboarding@resend.dev>';
@@ -60,31 +67,29 @@ const resend       = resendApiKey ? new Resend(resendApiKey) : null;
 // Expose devCode in the response whenever this sender is in use so dev/staging flows work.
 const isDevSender  = fromEmail.includes('resend.dev');
 
-// ─── OTP constants ────────────────────────────────────────────────────────────
+// OTP constants
 
 const CODE_TTL_MS         = 10 * 60 * 1000;   // 10 minutes
 const OTP_SEND_MAX        = 3;                 // max sends per email per window
 const OTP_SEND_WINDOW_MS  = 10 * 60 * 1000;   // window for send rate limit
 const OTP_MAX_ATTEMPTS    = 5;                 // max failed verify attempts
 
-// ─── Refresh token constants ──────────────────────────────────────────────────
+// Refresh token constants
 
 const REFRESH_TTL_DAYS = 30;
 
-// ─── Validation ───────────────────────────────────────────────────────────────
+// Validation
 
-const sendEmailSchema       = z.object({ email: z.email() });
-const verifyEmailSchema     = z.object({
+const sendEmailSchema   = z.object({ email: z.email() });
+const verifyEmailSchema = z.object({
   email: z.email(),
   code:  z.string().min(6).max(6),
 });
-const refreshSchema         = z.object({ refreshToken: z.string().min(1) });
-const signoutSchema         = z.object({ refreshToken: z.string().min(1) });
-const userPrefsSchema       = z.object({
+const userPrefsSchema   = z.object({
   retentionDays: z.number().int().positive().nullable().optional(),
 });
 
-// ─── DB helpers ───────────────────────────────────────────────────────────────
+// DB helpers
 
 type Db = PrismaClient;
 
@@ -156,7 +161,24 @@ async function createRefreshToken(db: Db, userId: string): Promise<string> {
   return raw;
 }
 
-// ─── Email template ───────────────────────────────────────────────────────────
+// Cookie helpers
+
+function setAuthCookies(reply: FastifyReply, accessToken: string, refreshToken: string): void {
+  const base = { httpOnly: true, secure: IS_PRODUCTION, sameSite: 'lax' as const, path: '/' };
+  reply.setCookie('nl_access',  accessToken,  { ...base, maxAge: 15 * 60 });
+  reply.setCookie('nl_refresh', refreshToken, { ...base, maxAge: REFRESH_TTL_DAYS * 24 * 60 * 60 });
+}
+
+function clearAuthCookies(reply: FastifyReply): void {
+  reply.clearCookie('nl_access',  { path: '/' });
+  reply.clearCookie('nl_refresh', { path: '/' });
+}
+
+function getCookies(request: unknown): Record<string, string | undefined> {
+  return (request as { cookies?: Record<string, string | undefined> }).cookies ?? {};
+}
+
+// Email template
 
 function buildEmailHtml(code: string): string {
   return `<!DOCTYPE html>
@@ -187,11 +209,11 @@ function buildEmailHtml(code: string): string {
 </html>`.trim();
 }
 
-// ─── Route plugin ─────────────────────────────────────────────────────────────
+// Route plugin
 
 export async function authRoute(fastify: FastifyInstance): Promise<void> {
 
-  // ── GET /api/auth/google ─────────────────────────────────────────────────
+  // GET /api/auth/google
 
   fastify.get('/auth/google', async (_request, reply) => {
     if (!GOOGLE_CLIENT_ID) {
@@ -214,7 +236,7 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
     return reply.redirect(`${GOOGLE_AUTH_URL}?${params.toString()}`);
   });
 
-  // ── GET /api/auth/google/callback ────────────────────────────────────────
+  // GET /api/auth/google/callback
 
   fastify.get<{ Querystring: { code?: string; error?: string } }>(
     '/auth/google/callback',
@@ -259,11 +281,11 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
           createRefreshToken(fastify.db, user.id),
         ]);
 
+        setAuthCookies(reply, accessToken, refreshToken);
+
         logger.info({ userId: user.id, email: user.email }, 'Google sign-in success');
 
-        return reply.redirect(
-          `${APP_URL}/auth?token=${encodeURIComponent(accessToken)}&refreshToken=${encodeURIComponent(refreshToken)}`,
-        );
+        return reply.redirect(`${APP_URL}/`);
       } catch (err) {
         logger.error({ err }, 'Google OAuth callback error');
         return reply.redirect(`${APP_URL}/auth?error=google_failed`);
@@ -271,7 +293,7 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
     },
   );
 
-  // ── POST /api/auth/email/send ────────────────────────────────────────────
+  // POST /api/auth/email/send
 
   fastify.post<{ Body: { email: string } }>('/auth/email/send', async (request, reply) => {
     const parsed = sendEmailSchema.safeParse(request.body);
@@ -347,7 +369,7 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
     };
   });
 
-  // ── POST /api/auth/email/verify ──────────────────────────────────────────
+  // POST /api/auth/email/verify
 
   fastify.post<{ Body: { email: string; code: string } }>('/auth/email/verify', async (request, reply) => {
     const parsed = verifyEmailSchema.safeParse(request.body);
@@ -383,7 +405,6 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
     const expectedHash = hashOtp(code, email);
 
     if (otpRecord.codeHash !== expectedHash) {
-      // Increment attempts. If maxed out, the WHERE clause above will exclude this record.
       await fastify.db.otpCode.update({
         where: { id: otpRecord.id },
         data:  { attempts: { increment: 1 } },
@@ -415,38 +436,40 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
       createRefreshToken(fastify.db, user.id),
     ]);
 
+    setAuthCookies(reply, accessToken, refreshToken);
+
     logger.info({ userId: user.id, email }, 'Email sign-in success');
 
     return {
       success: true,
       data: {
-        token:        accessToken,
-        refreshToken: refreshToken,
         user: { id: user.id, email: user.email, name: user.name },
+        tokenExpiresAt: Date.now() + ACCESS_TOKEN_TTL_MS,
       },
       timestamp: new Date().toISOString(),
     };
   });
 
-  // ── POST /api/auth/refresh ───────────────────────────────────────────────
-  // Rotates the refresh token: old record is revoked, new record is created.
+  // POST /api/auth/refresh
+  // Reads nl_refresh cookie, rotates the token pair, sets new cookies.
 
-  fastify.post<{ Body: { refreshToken: string } }>('/auth/refresh', async (request, reply) => {
-    const parsed = refreshSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({
+  fastify.post('/auth/refresh', async (request, reply) => {
+    const cookies = getCookies(request);
+    const rawRefreshToken = cookies['nl_refresh'];
+
+    if (!rawRefreshToken) {
+      return reply.code(401).send({
         success: false,
-        error: { code: 'VALIDATION_ERROR', message: 'refreshToken is required.' },
+        error: { code: 'INVALID_REFRESH_TOKEN', message: 'No refresh token. Please sign in again.' },
         timestamp: new Date().toISOString(),
       });
     }
 
-    const { refreshToken } = parsed.data;
-    const tokenHash = hashToken(refreshToken);
-
+    const tokenHash = hashToken(rawRefreshToken);
     const record = await fastify.db.refreshToken.findUnique({ where: { tokenHash } });
 
     if (!record || record.revokedAt !== null || record.expiresAt < new Date()) {
+      clearAuthCookies(reply);
       return reply.code(401).send({
         success: false,
         error: { code: 'INVALID_REFRESH_TOKEN', message: 'Refresh token is invalid or expired. Please sign in again.' },
@@ -457,6 +480,7 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
     const user = await fastify.db.user.findUnique({ where: { id: record.userId } });
 
     if (!user) {
+      clearAuthCookies(reply);
       return reply.code(401).send({
         success: false,
         error: { code: 'USER_NOT_FOUND', message: 'User not found.' },
@@ -464,7 +488,7 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
       });
     }
 
-    // Revoke the old token and issue a fresh pair atomically.
+    // Revoke old token and issue a fresh pair atomically.
     const [, newRefreshToken] = await Promise.all([
       fastify.db.refreshToken.update({
         where: { id: record.id },
@@ -475,42 +499,41 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
 
     const newAccessToken = await signToken({ userId: user.id, email: user.email, name: user.name });
 
+    setAuthCookies(reply, newAccessToken, newRefreshToken);
+
     logger.info({ userId: user.id }, 'Token refreshed');
 
     return {
       success: true,
       data: {
-        token:        newAccessToken,
-        refreshToken: newRefreshToken,
         user: { id: user.id, email: user.email, name: user.name },
+        tokenExpiresAt: Date.now() + ACCESS_TOKEN_TTL_MS,
       },
       timestamp: new Date().toISOString(),
     };
   });
 
-  // ── POST /api/auth/signout ───────────────────────────────────────────────
+  // POST /api/auth/signout
+  // Reads nl_refresh cookie, revokes it, clears both cookies.
 
-  fastify.post<{ Body: { refreshToken: string } }>('/auth/signout', async (request, reply) => {
-    const parsed = signoutSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({
-        success: false,
-        error: { code: 'VALIDATION_ERROR', message: 'refreshToken is required.' },
-        timestamp: new Date().toISOString(),
-      });
+  fastify.post('/auth/signout', async (request, reply) => {
+    const cookies = getCookies(request);
+    const rawRefreshToken = cookies['nl_refresh'];
+
+    if (rawRefreshToken) {
+      const tokenHash = hashToken(rawRefreshToken);
+      const record = await fastify.db.refreshToken.findUnique({ where: { tokenHash } });
+
+      if (record && !record.revokedAt) {
+        await fastify.db.refreshToken.update({
+          where: { id: record.id },
+          data:  { revokedAt: new Date() },
+        });
+        logger.info({ userId: record.userId }, 'User signed out');
+      }
     }
 
-    const tokenHash = hashToken(parsed.data.refreshToken);
-
-    const record = await fastify.db.refreshToken.findUnique({ where: { tokenHash } });
-
-    if (record && !record.revokedAt) {
-      await fastify.db.refreshToken.update({
-        where: { id: record.id },
-        data:  { revokedAt: new Date() },
-      });
-      logger.info({ userId: record.userId }, 'User signed out');
-    }
+    clearAuthCookies(reply);
 
     // Always return success — idempotent sign-out.
     return {
@@ -520,13 +543,14 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
     };
   });
 
-  // ── DELETE /api/auth/account ────────────────────────────────────────────
+  // DELETE /api/auth/account
   // Permanently deletes the authenticated user and all their data via cascade.
 
   fastify.delete('/auth/account', async (request, reply) => {
     const userId = await requireAuth(request, reply);
     if (!userId) return;
 
+    clearAuthCookies(reply);
     await fastify.db.user.delete({ where: { id: userId } });
 
     logger.info({ userId }, 'Account deleted');
@@ -538,7 +562,7 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
     };
   });
 
-  // ── PATCH /api/user/preferences ──────────────────────────────────────────
+  // PATCH /api/user/preferences
   // Updates per-user preferences stored server-side (e.g. retentionDays).
 
   fastify.patch<{ Body: { retentionDays?: number | null } }>(
@@ -576,11 +600,17 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
     },
   );
 
-  // ── GET /api/auth/me ─────────────────────────────────────────────────────
+  // GET /api/auth/me
+  // Returns the current user from the access token cookie (or Bearer header).
+  // Also returns tokenExpiresAt so the client can schedule a proactive refresh.
 
   fastify.get('/auth/me', async (request, reply) => {
-    const authHeader = request.headers['authorization'];
-    if (!authHeader?.startsWith('Bearer ')) {
+    const cookies     = getCookies(request);
+    const cookieToken = cookies['nl_access'];
+    const authHeader  = request.headers['authorization'];
+    const raw = cookieToken ?? (authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null);
+
+    if (!raw) {
       return reply.code(401).send({
         success: false,
         error: { code: 'UNAUTHORIZED', message: 'Authentication required.' },
@@ -589,7 +619,7 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
     }
 
     try {
-      const { userId } = await verifyToken(authHeader.slice(7));
+      const { userId, exp } = await verifyToken(raw);
       const user = await fastify.db.user.findUnique({ where: { id: userId } });
 
       if (!user) {
@@ -602,7 +632,13 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
 
       return {
         success: true,
-        data: { id: user.id, email: user.email, name: user.name, avatar: user.avatar },
+        data: {
+          id:             user.id,
+          email:          user.email,
+          name:           user.name,
+          avatar:         user.avatar,
+          tokenExpiresAt: exp ? exp * 1000 : Date.now() + ACCESS_TOKEN_TTL_MS,
+        },
         timestamp: new Date().toISOString(),
       };
     } catch {

@@ -201,9 +201,12 @@ export class NvidiaLlmService {
     });
 
     const segmentOffset = request.notes.length;
-    const segmentLines = request.transcriptSegments.map((s, i) =>
-      `[${segmentOffset + i + 1}] TRANSCRIPT ${fmt(s.startOffsetSeconds)}: ${s.text}`,
-    );
+    const segmentLines = request.transcriptSegments.map((s, i) => {
+      const label = s.id === '__live__'
+        ? 'LIVE (in progress)'
+        : `TRANSCRIPT ${fmt(s.startOffsetSeconds)}`;
+      return `[${segmentOffset + i + 1}] ${label}: ${s.text}`;
+    });
 
     const allSources = [...noteLines, ...segmentLines].join('\n');
 

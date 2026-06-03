@@ -4,6 +4,7 @@
 
 import Fastify, { type FastifyError } from 'fastify';
 import cors from '@fastify/cors';
+import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
@@ -46,7 +47,7 @@ export async function buildApp(opts: { disableRateLimit?: boolean } = {}): Promi
     origin: allowedOrigins,
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-request-id'],
-    credentials: false,
+    credentials: true,
   });
 
   // Rate limiting
@@ -65,6 +66,10 @@ export async function buildApp(opts: { disableRateLimit?: boolean } = {}): Promi
       }),
     });
   }
+
+  // Cookies (must be registered before routes so request.cookies is available)
+
+  await app.register(cookie);
 
   // WebSocket
 

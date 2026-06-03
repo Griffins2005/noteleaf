@@ -61,7 +61,11 @@ export async function chatRoute(fastify: FastifyInstance): Promise<void> {
         }) as unknown as ApiResponse<AskNotesResponse>;
       }
 
-      const { question, notes, transcriptSegments, history } = parsed.data;
+      const { question, history } = parsed.data;
+      const notes = parsed.data.notes.filter((n) => n.content.trim().length > 0);
+      const transcriptSegments = parsed.data.transcriptSegments.filter(
+        (s) => s.text.trim().length > 0,
+      );
 
       if (notes.length === 0 && transcriptSegments.length === 0) {
         return reply.code(400).send({

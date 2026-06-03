@@ -6,10 +6,13 @@ const JWT_SECRET = new TextEncoder().encode(
   process.env['JWT_SECRET'] ?? 'dev-secret-please-set-JWT_SECRET-in-production',
 );
 
+export const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
 export interface JwtPayload {
   userId: string;
   email:  string | null;
   name:   string | null;
+  exp?:   number;
 }
 
 // Access token
@@ -19,17 +22,19 @@ export async function signToken(payload: JwtPayload): Promise<string> {
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setJti(randomBytes(16).toString('hex'))
-    .setExpirationTime('1h')
+    .setExpirationTime('15m')
     .sign(JWT_SECRET);
 }
 
 export async function verifyToken(token: string): Promise<JwtPayload> {
   const { payload } = await jwtVerify(token, JWT_SECRET);
-  return {
+  const result: JwtPayload = {
     userId: payload['userId'] as string,
     email:  (payload['email'] as string | null) ?? null,
     name:   (payload['name'] as string | null) ?? null,
   };
+  if (payload.exp !== undefined) result.exp = payload.exp;
+  return result;
 }
 
 // Refresh token helpers
@@ -56,15 +61,20 @@ export function hashOtp(code: string, email: string): string {
 // Request guard
 
 /**
- * Extracts and validates the JWT from the Authorization: Bearer header.
+ * Extracts and validates the JWT from the nl_access httpOnly cookie (preferred)
+ * or the Authorization: Bearer header (fallback for programmatic API clients).
  * Returns the userId on success, or sends a 401 and returns '' on failure.
  */
 export async function requireAuth(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<string> {
-  const authHeader = request.headers['authorization'];
-  if (!authHeader?.startsWith('Bearer ')) {
+  const cookies    = (request as unknown as { cookies?: Record<string, string | undefined> }).cookies;
+  const cookieToken = cookies?.['nl_access'];
+  const authHeader  = request.headers['authorization'];
+  const raw = cookieToken ?? (authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null);
+
+  if (!raw) {
     void reply.code(401).send({
       success: false,
       error: { code: 'UNAUTHORIZED', message: 'Authentication required.' },
@@ -74,7 +84,7 @@ export async function requireAuth(
   }
 
   try {
-    const { userId } = await verifyToken(authHeader.slice(7));
+    const { userId } = await verifyToken(raw);
     return userId;
   } catch {
     void reply.code(401).send({

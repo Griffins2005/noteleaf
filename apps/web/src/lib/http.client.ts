@@ -4,13 +4,13 @@
  *
  * Design decisions:
  *   - Uses native fetch (no Axios) — available in Node 18+ and all modern browsers.
- *   - Automatically injects the Authorization: Bearer header from localStorage.
- *   - On a 401 response, tries to silently refresh the access token once via the
- *     refresh token. If the refresh succeeds the original request is retried. If
- *     it fails, clearAuth() is called and the 401 error is re-thrown so the
- *     AuthGuard / router redirects the user to sign-in.
- *   - A module-level promise de-duplicates concurrent refresh calls so that
- *     multiple simultaneous 401s only trigger one refresh round-trip.
+ *   - credentials: 'include' on every request so httpOnly auth cookies are sent automatically.
+ *     No Authorization header needed — tokens never touch JavaScript memory.
+ *   - On a 401 response, calls POST /api/auth/refresh once (cookie-based rotation).
+ *     If refresh succeeds the original request is retried. If it fails, clearAuth() is
+ *     called and the 401 error is re-thrown so AuthGuard redirects the user to sign-in.
+ *   - A module-level promise de-duplicates concurrent refresh calls so that multiple
+ *     simultaneous 401s only trigger one refresh round-trip.
  *   - Unwraps ApiResponse<T> envelopes so callers receive T directly.
  *   - Throws typed HttpError on non-2xx responses.
  */
@@ -36,13 +36,6 @@ export class HttpError extends Error {
 
 const BASE_URL = '';  // Relative URLs — Next.js rewrites handle /api/* proxying
 
-// Auth token helpers
-
-function getToken(): string {
-  if (typeof window === 'undefined') return '';
-  return localStorage.getItem('nl_token') ?? '';
-}
-
 // Token refresh (de-duplicated)
 
 let refreshPromise: Promise<boolean> | null = null;
@@ -65,8 +58,6 @@ async function request<T>(
   body?: unknown,
   isRetry = false,
 ): Promise<T> {
-  const token = getToken();
-
   const headers: Record<string, string> = {
     'Accept': 'application/json',
   };
@@ -75,13 +66,10 @@ async function request<T>(
     headers['Content-Type'] = 'application/json';
   }
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
   const response = await fetch(`${BASE_URL}${path}`, {
     method,
     headers,
+    credentials: 'include',  // send httpOnly auth cookies on every request
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 
