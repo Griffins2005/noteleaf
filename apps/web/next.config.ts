@@ -9,7 +9,7 @@
  *     and remove the rewrite here — Next.js rewrites don't apply to WebSockets on Vercel.
  *   - No experimental features — stability over cutting edge for a v1 product.
  *
- * Environment variables (see .env.example):
+ * Environment variables (see root `.env.example` and `apps/web/.env.example`):
  *   NEXT_PUBLIC_API_URL  — Fastify API base URL. Default: http://localhost:3002
  *                          In Docker: http://api:3001 (service name resolves via Docker DNS)
  *   NEXT_PUBLIC_WS_URL   — WebSocket URL override. Leave empty for auto-derivation.

@@ -10,6 +10,7 @@
 
 # Env files (injected via docker-compose.yml, never baked in)
 **/.env
+!**/.env.example
 **/.env.local
 **/.env.*.local
 **/.env.development

@@ -13,6 +13,7 @@
     "lint": "turbo run lint",
     "type-check": "turbo run type-check",
     "test": "turbo run test",
+    "verify": "npm run type-check && npm run lint && npm run test && npm run build",
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {

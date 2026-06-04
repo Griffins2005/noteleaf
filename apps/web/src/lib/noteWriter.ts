@@ -62,7 +62,7 @@ export function isRhetoricalSpeech(text: string): boolean {
 }
 
 function formatActionNote(text: string): string {
-  let t = text
+  const t = text
     .replace(/^(so|well|okay|alright|right|yeah|look|listen)[,\s]+/i, '')
     .replace(/^(i think|we think)\s+(we|i)\s+(need to|should|have to|must)\s+/i, '')
     .replace(/^(we|i)\s+(need to|should|have to|must)\s+/i, '')
@@ -77,7 +77,7 @@ function formatActionNote(text: string): string {
 }
 
 function formatDecisionNote(text: string): string {
-  let t = text
+  const t = text
     .replace(/^we (decided|agreed|confirmed|resolved|concluded|settled on|finalized|chose|picked|selected) (to |on |that )?/i, '')
     .replace(/^(everyone|the team|they) (agreed|decided|confirmed) (that |on )?/i, '')
     .replace(/^(it was |it's |its )?(confirmed|agreed|approved|finalized|resolved) (that )?/i, '')

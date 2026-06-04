@@ -50,7 +50,7 @@ When you press stop, Noteleaf sends all captured notes and a portion of the raw 
 
 ### 5. Ask my notes — live or after the meeting
 
-Open the **Ask notes** tab anytime after speech is captured — including **while recording is still in progress**. The AI uses finalized notes, transcript segments, and your current partial speech. Every answer cites its source (`[1]`, `[2]`, …). Chat history is kept per session.
+Open the **Ask notes** tab anytime after speech is captured — including **while recording is still in progress**. The AI uses finalized notes, transcript segments, and your current partial speech. Every answer cites its source (`[1]`, `[2]`, …). Chat history is saved per session and restored after refresh.
 
 ### 6. Sessions sync to your account
 
@@ -224,8 +224,11 @@ Requires Node.js 20+ and a local PostgreSQL 15+ instance.
 # Install dependencies
 npm install
 
-# Configure the API
+# Configure the API (Docker: use port 5433 on host — see apps/api/.env.example)
 cp apps/api/.env.example apps/api/.env
+
+# Optional: configure the web app for local Next.js dev
+cp apps/web/.env.example apps/web/.env.local
 # Edit apps/api/.env — set DATABASE_URL, JWT_SECRET, NVIDIA_API_KEY
 
 # Generate the Prisma client and run migrations
@@ -254,7 +257,113 @@ Root `.env` (used by Docker Compose):
 | `WEB_PORT` | No | `3003` | Host port for the Next.js app |
 | `API_PORT` | No | `3002` | Host port for the Fastify API |
 | `ALLOWED_ORIGINS` | No | `http://localhost:3003` | Comma-separated CORS origins |
+| `NEXT_PUBLIC_APP_URL` | No* | `http://localhost:3003` | Public frontend URL — baked into web Docker image at build time |
+| `NEXT_PUBLIC_API_URL` | No* | `http://localhost:3002` | Public API URL — baked into web Docker image at build time |
+| `API_URL` | No | `http://localhost:3002` | API URL for OAuth callbacks and server-side links |
 | `NODE_ENV` | No | `production` | Set to `development` for verbose logs and full error details |
+
+\* Required for production Docker builds when not using localhost defaults.
+
+---
+
+## Deployment
+
+### Pre-flight (run before every release)
+
+```bash
+npm run type-check
+npm run lint
+npm run test
+npm run build
+```
+
+Commit all pending migrations under `apps/api/prisma/migrations/`.
+
+### Docker Compose (recommended)
+
+```bash
+cp .env.example .env
+# Edit .env — see production checklist below
+docker compose up --build -d
+```
+
+Startup order: **postgres** → **migrate** (Prisma) → **api** → **web**.
+
+Verify:
+
+```bash
+curl -s http://localhost:3002/api/health
+open http://localhost:3003
+```
+
+Sign in, record briefly, stop, check **Recap** and **Ask notes**, then refresh — session title and chat history should persist.
+
+```bash
+docker compose logs -f api web
+docker compose restart api web
+```
+
+### Production environment checklist
+
+Set these in root `.env` before any public deployment:
+
+| Variable | Notes |
+|---|---|
+| `NVIDIA_API_KEY` | Required — [build.nvidia.com](https://build.nvidia.com) |
+| `JWT_SECRET` | Long random string — never use dev defaults |
+| `POSTGRES_PASSWORD` | Strong password |
+| `NEXT_PUBLIC_APP_URL` | Public URL users open in the browser |
+| `NEXT_PUBLIC_API_URL` | Public API URL (browser requests + WebSocket STT if used) |
+| `APP_URL` | Same as `NEXT_PUBLIC_APP_URL` (OAuth redirects) |
+| `API_URL` | Same as `NEXT_PUBLIC_API_URL` |
+| `ALLOWED_ORIGINS` | Comma-separated frontend origin(s), exact match |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | If using Google sign-in |
+| `RESEND_API_KEY` | If using email OTP in production |
+
+**Build-time:** `NEXT_PUBLIC_*` values are embedded in the web image during `docker compose build`. After changing public URLs, rebuild the `web` service.
+
+### Production on a VPS
+
+1. Install Docker and Docker Compose.
+2. Clone the repo; configure `.env` with production domain URLs.
+3. Put a reverse proxy (Caddy, nginx, or a cloud load balancer) in front:
+   - `/` → `web:3000`
+   - `/api/*` → `api:3001`
+   - WebSocket upgrade for `/api/stt/stream` → `api:3001` (only if using server-side STT)
+4. Enable TLS (e.g. Let's Encrypt).
+5. Do not expose Postgres publicly — firewall or remove the host port mapping on `5433` in `docker-compose.yml` if customized.
+
+### Database migrations
+
+Migrations run automatically via the `migrate` service on each `docker compose up`.
+
+Manual run from the host (Docker Postgres exposed on port **5433**):
+
+```bash
+cd apps/api
+DATABASE_URL="postgresql://noteleaf:YOUR_PASSWORD@localhost:5433/noteleaf?schema=public" npx prisma migrate deploy
+```
+
+### Secrets — never commit
+
+These paths are gitignored; configure only on the server or in local copies:
+
+- `.env` (repo root — Docker Compose)
+- `apps/api/.env` (local API dev without Docker)
+- `apps/web/.env.local` (local Next.js dev)
+
+Use `.env.example` and `apps/*/`.env.example` as templates only.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `P1001` / can't reach database | Postgres not running, or wrong port (Docker host port is **5433**, not 5432) |
+| `NVIDIA_API_KEY must be set` | Add key to root `.env`, rebuild containers |
+| 502 on recap / Ask notes | `docker compose logs api` — check NVIDIA key and rate limits |
+| Chat history not saved | Run migrations; ensure `chat_messages` migration is applied |
+| OAuth redirect mismatch | `APP_URL` must match Google Cloud authorized redirect URIs |
+| CORS errors | `ALLOWED_ORIGINS` must include your frontend URL exactly |
 
 ---
 
@@ -272,7 +381,7 @@ cd apps/web && npm run test
 cd apps/api && npm run test
 ```
 
-The web app includes unit tests for the note classifier (27 tests). API and web Vitest configs use `passWithNoTests: true` so optional smoke-test folders can be removed without breaking CI.
+The web app includes unit tests for the note classifier and note writer (33 tests). API Vitest uses `passWithNoTests: true` when no smoke tests are present.
 
 ---
 
@@ -366,8 +475,8 @@ User asks a question in Ask notes tab
     │
     ▼
 POST /api/chat/ask
-  Payload: question · session notes · transcript segments · history
-  Context limited to this session only
+  Payload: sessionId · question · session notes · transcript segments · history
+  Auth: httpOnly cookie (session must belong to user)
     │
     ▼
 NVIDIA Nemotron 3 Super 120B
@@ -375,6 +484,7 @@ NVIDIA Nemotron 3 Super 120B
   Returns: { answer, citations[] }
     │
     ▼
+API appends user + assistant messages to session.chat_messages (JSONB)
 Answer renders with inline citation markers
 Each cited source shown as a quote card
 ```
@@ -391,7 +501,7 @@ users
 
 sessions
   id (uuid PK) · user_uuid (FK → users) · title
-  notes (jsonb) · transcript · transcript_segments (jsonb)
+  notes (jsonb) · transcript · transcript_segments (jsonb) · chat_messages (jsonb)
   duration_seconds · status (enum) · created_at · updated_at
   └── ai_summaries (cascade delete)
 
@@ -417,9 +527,9 @@ user_emails (legacy email-to-uuid mapping)
 
 | Store | What it holds | Persistence |
 |---|---|---|
-| `auth.store` | JWT token, refresh token, decoded user | localStorage |
+| `auth.store` | Current user from `/api/auth/me` | httpOnly cookies (server-managed) |
 | `user.store` | UI preferences (autoClassify, retentionDays, etc.) | localStorage |
-| `session.store` | Active session notes, transcript, session list | In-memory only |
+| `session.store` | Active session notes, transcript, session list | In-memory; server is source of truth after load |
 
 React Query is the source of truth for server data. Zustand `session.store` holds optimistic state during recording. On each query invalidation after recording stops, React Query re-fetches and the merged list updates.
 
@@ -461,7 +571,7 @@ All routes except `/api/health` require `Authorization: Bearer <token>`.
 | `PATCH` | `/api/sessions/:id` | Update title, notes, transcript, status |
 | `DELETE` | `/api/sessions/:id` | Delete a session |
 | `POST` | `/api/ai/summarize` | Generate and persist an AI meeting recap |
-| `POST` | `/api/chat/ask` | Chat with a session's notes and transcript |
+| `POST` | `/api/chat/ask` | Chat with a session's notes and transcript (persists history) |
 | `GET (WS)` | `/api/stt/stream` | WebSocket STT proxy (self-hosted NVIDIA NIM mode) |
 
 ---
@@ -527,6 +637,11 @@ apps/web/src/
     useNoteClassifier.ts           — Quality-gated classifier hook
     components/NoteCard.tsx        — Editable note card with inline type reclassification
     components/AiSummaryCard.tsx   — AI recap card (loading / success / error / retry)
+  features/meeting/components/
+    TabCoachPopover.tsx            — Minimal tab coach popover
+    MeetingHowToStrip.tsx          — Meeting how-to strip
+    MeetingPhaseGuide.tsx          — Phase guide (notes tab)
+    PostMeetingActions.tsx         — Post-meeting action shortcuts
 
   features/chat/
     ChatPanel.tsx                  — Ask my notes UI with citation cards
@@ -535,13 +650,18 @@ apps/web/src/
     sessions.api.ts                — Typed wrappers for all session HTTP calls
 
   store/
-    auth.store.ts                  — JWT token, refresh token, user object, sign-out
+    auth.store.ts                  — Current user; cookie session via /api/auth/me
     user.store.ts                  — UI preferences (persisted to localStorage)
     session.store.ts               — In-memory session list, active session notes/transcript
 
   lib/
-    http.client.ts                 — Typed fetch wrapper with Bearer auth and silent token refresh
-    noteClassifier.ts              — Pure classification function (27 unit tests)
+    http.client.ts                 — Typed fetch wrapper (cookies, silent refresh on 401)
+    noteClassifier.ts              — Pure classification function
+    noteWriter.ts                  — Human-style note formatting from STT text
+    instantRecap.ts                — Instant recap draft before LLM enhancement
+    sessionContext.ts              — Payload builders for summarize + chat APIs
+    suggestedQuestions.ts          — Ask notes suggested question rotation
+    tabCoachMessages.ts            — Per-tab coach popover copy
     exportFormatter.ts             — .txt export builder and browser download trigger
     cn.ts                          — Tailwind class merge utility
 

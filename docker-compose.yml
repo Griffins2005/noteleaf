@@ -12,9 +12,8 @@
 #   postgres healthy → migrate completes → api healthy → web starts
 #
 # Quick start:
-#   1. cp apps/api/.env.example apps/api/.env  (fill in API keys)
+#   1. cp .env.example .env  (fill in NVIDIA_API_KEY, JWT_SECRET, POSTGRES_PASSWORD)
 #   2. docker compose up --build
-#      (apps/web/.env.local already has working defaults — no copy needed)
 #
 # Access:
 #   Frontend: http://localhost:3003

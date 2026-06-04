@@ -215,6 +215,7 @@ export function NotepadShell() {
     message: string;
   } | null>(null);
   const notesEndRef = useRef<HTMLDivElement>(null);
+  const hasRestoredSession = useRef(false);
 
   const qc = useQueryClient();
   const [noteSearch, setNoteSearch] = useState('');
@@ -344,7 +345,8 @@ export function NotepadShell() {
 
   // Restore last-open session after refresh
   useEffect(() => {
-    if (!userId || apiSessions.length === 0 || activeSessionId) return;
+    if (!userId || apiSessions.length === 0 || activeSessionId || hasRestoredSession.current) return;
+    hasRestoredSession.current = true;
 
     const lastId = typeof window !== 'undefined'
       ? localStorage.getItem(LAST_SESSION_KEY)
@@ -354,8 +356,7 @@ export function NotepadShell() {
       : apiSessions[0]!.id;
 
     void handleSelectSession(target);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- run once when session list loads
-  }, [userId, apiSessions.length, activeSessionId]);
+  }, [userId, apiSessions, activeSessionId]);
 
   const generateAiNotes = useCallback(async (options?: {
     sessionId?: string | null;

@@ -7,28 +7,46 @@ dist/
 out/
 build/
 
-# Turbo
+# Turbo / TypeScript cache
 .turbo/
+*.tsbuildinfo
 
-# Env files
+# Environment — never commit secrets (.env.example files are tracked)
 .env
 .env.local
 .env.*.local
 .env.development
 .env.production
+apps/api/.env
+apps/web/.env.local
+
+# Explicitly track env templates
+!.env.example
+!**/.env.example
 
 # Logs
 *.log
-
-# TypeScript
-*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Test coverage
 coverage/
 
-# OS / editor
+# OS
 .DS_Store
-*.pem
-.vscode/settings.json
+Thumbs.db
 
+# Keys / certs
+*.pem
+
+# Editors (personal settings only; keep shared config if added later)
+.vscode/settings.json
+.idea/
+
+# Local AI / agent tooling
 .claude
+
+# Prisma local SQLite (not used in production, but ignore if created)
+*.db
+*.db-journal
