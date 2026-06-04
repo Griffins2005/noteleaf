@@ -24,6 +24,7 @@
 
 import type { NoteType, ClassifierInput, ClassifierOutput } from '@noteleaf/shared-types';
 import { v4 as uuidv4 } from 'uuid';
+import { formatHumanNote, refineNoteType, cleanSpeech } from './noteWriter';
 
 // ─── Classification rules ─────────────────────────────────────────────────────
 
@@ -163,17 +164,20 @@ export function buildNoteFromTranscript(
   enableTagging: boolean,
 ): ClassifierOutput {
   const { transcript, sessionId, sessionOffsetSeconds } = input;
+  const raw = transcript.trim();
 
-  // Capitalise the first character — Riva handles punctuation,
-  // but the first letter of a segment may arrive lowercase.
-  const content = transcript.charAt(0).toUpperCase() + transcript.slice(1);
+  let type = classifyTranscript(raw);
+  type = refineNoteType(raw, type);
+
+  const content = formatHumanNote(raw, type);
+  const tagSource = cleanSpeech(raw);
 
   return {
     id: uuidv4(),
     sessionId,
-    type: classifyTranscript(transcript),
+    type,
     content,
-    tags: enableTagging ? extractTags(transcript) : [],
+    tags: enableTagging ? extractTags(tagSource) : [],
     capturedAt: new Date().toISOString(),
     sessionOffsetSeconds,
   };

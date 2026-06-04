@@ -151,7 +151,7 @@ export function NavigationSidebar({
             <path d="M13 19L9.5 17" stroke="rgba(13,122,71,0.35)" strokeWidth="1.2" strokeLinecap="round"/>
           </svg>
         </div>
-        <span className="font-serif text-[17px] font-bold leading-tight" style={{ color: 'var(--nl-sidebar-text)', letterSpacing: '-0.2px' }}>Noteleaf</span>
+        <span className="font-serif text-[17px] font-bold leading-tight text-white" style={{ letterSpacing: '-0.2px' }}>Noteleaf</span>
       </div>
 
       {/* New session */}
@@ -159,10 +159,12 @@ export function NavigationSidebar({
         <button
           type="button"
           onClick={onNewSession}
-          className="w-full flex items-center justify-center gap-1.5 py-2 rounded-[8px] text-[12px] font-mono font-medium text-white transition-colors"
-          style={{ background: 'var(--nl-sidebar-accent)' }}
-          onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.88')}
-          onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+          className={cn(
+            'w-full flex items-center justify-center gap-1.5 py-2 rounded-[8px]',
+            'text-[12px] font-mono font-medium transition-colors',
+            'border border-white/35 text-white bg-white/10',
+            'hover:bg-white/15 hover:border-white/50',
+          )}
         >
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           New Session

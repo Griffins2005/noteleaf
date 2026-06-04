@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { http, HttpError } from '@/lib/http.client';
 import { notesForChat, segmentsForChat } from '@/lib/sessionContext';
+import { getSuggestedQuestions, hasMoreToExplore } from '@/lib/suggestedQuestions';
 import { cn } from '@/lib/cn';
 import type { ChatMessage, ChatCitation, AskNotesResponse, Note, TranscriptSegment } from '@noteleaf/shared-types';
 
@@ -17,6 +18,8 @@ interface ChatPanelProps {
   liveTranscript?: string;
   isRecording?: boolean;
   sessionTitle: string;
+  initialMessages?: ChatMessage[];
+  onMessagesPersisted?: (messages: ChatMessage[]) => void;
 }
 
 // ─── Citations list — compact footnote rows ───────────────────────────────────
@@ -65,7 +68,7 @@ function CitationRow({ citation }: { citation: ChatCitation }) {
       </span>
 
       {/* Truncated quote */}
-      <span className="text-[11px] font-sans text-[var(--nl-color-ink-secondary)] min-w-0 truncate">
+      <span className="text-[11px] font-sans text-[var(--nl-color-ink-secondary)] min-w-0 flex-1 line-clamp-2">
         "{quote}"
       </span>
     </div>
@@ -103,9 +106,9 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
   if (isUser) {
     return (
-      <div className="flex justify-end">
+      <div className="flex justify-end w-full">
         <div className={cn(
-          'max-w-[75%] px-4 py-2.5 rounded-[var(--nl-radius-lg)] rounded-br-[4px]',
+          'max-w-[min(100%,42rem)] px-4 py-2.5 rounded-[var(--nl-radius-lg)] rounded-br-[4px]',
           'bg-[var(--nl-color-accent-primary)] text-white',
           'text-[14px] font-sans leading-[1.65]',
         )}>
@@ -116,19 +119,18 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   }
 
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-2.5 w-full">
       {/* Answer */}
       <div className={cn(
-        'px-4 py-3 rounded-[var(--nl-radius-lg)] rounded-bl-[4px]',
+        'w-full px-4 py-3 rounded-[var(--nl-radius-lg)] rounded-bl-[4px]',
         'bg-[var(--nl-color-paper-raised)] border border-[var(--nl-border-subtle)]',
-        'max-w-[90%]',
       )}>
         <AnswerText text={message.content} />
       </div>
 
       {/* Citations — compact footnote rows */}
       {message.citations && message.citations.length > 0 && (
-        <div className="max-w-[90%] rounded-[var(--nl-radius-md)] border border-[var(--nl-border-subtle)] bg-[var(--nl-color-paper-raised)] overflow-hidden">
+        <div className="w-full rounded-[var(--nl-radius-md)] border border-[var(--nl-border-subtle)] bg-[var(--nl-color-paper-raised)] overflow-hidden">
           {/* Header */}
           <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--nl-border-subtle)] bg-[var(--nl-color-paper-sunken)]">
             <span className="text-[9px] font-mono uppercase tracking-widest text-[var(--nl-color-ink-disabled)]">
@@ -160,16 +162,24 @@ export function ChatPanel({
   liveTranscript = '',
   isRecording = false,
   sessionTitle,
+  initialMessages = [],
+  onMessagesPersisted,
 }: ChatPanelProps) {
-  const [messagesBySession, setMessagesBySession] = useState<Record<string, ChatMessage[]>>({});
+  const [messages, setMessages]       = useState<ChatMessage[]>(initialMessages);
   const [input, setInput]       = useState('');
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState<string | null>(null);
   const bottomRef               = useRef<HTMLDivElement>(null);
   const inputRef                = useRef<HTMLTextAreaElement>(null);
 
-  const chatKey = sessionId ?? '';
-  const messages = messagesBySession[chatKey] ?? [];
+  useEffect(() => {
+    setMessages(initialMessages);
+  }, [sessionId, initialMessages]);
+
+  useEffect(() => {
+    setInput('');
+    setError(null);
+  }, [sessionId]);
 
   const contextOptions = {
     liveTranscript,
@@ -184,29 +194,13 @@ export function ChatPanel({
   );
   const hasContext = apiNotes.length > 0 || apiSegments.length > 0;
 
-  const setSessionMessages = (
-    updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[]),
-  ) => {
-    if (!chatKey) return;
-    setMessagesBySession((prev) => {
-      const current = prev[chatKey] ?? [];
-      const next = typeof updater === 'function' ? updater(current) : updater;
-      return { ...prev, [chatKey]: next };
-    });
-  };
-
-  useEffect(() => {
-    setInput('');
-    setError(null);
-  }, [chatKey]);
-
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
   async function handleSend() {
     const q = input.trim();
-    if (!q || loading || !hasContext) return;
+    if (!q || loading || !hasContext || !sessionId) return;
 
     const userMsg: ChatMessage = {
       id:        uuidv4(),
@@ -215,7 +209,7 @@ export function ChatPanel({
       timestamp: new Date().toISOString(),
     };
 
-    setSessionMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => [...prev, userMsg]);
     setInput('');
     setLoading(true);
     setError(null);
@@ -225,6 +219,7 @@ export function ChatPanel({
 
     try {
       const res = await http.post<AskNotesResponse>('/api/chat/ask', {
+        sessionId,
         question: q,
         notes: apiNotes,
         transcriptSegments: apiSegments,
@@ -238,8 +233,13 @@ export function ChatPanel({
         citations: res.citations,
         timestamp: new Date().toISOString(),
       };
-      setSessionMessages((prev) => [...prev, assistantMsg]);
+      setMessages((prev) => {
+        const next = [...prev, assistantMsg];
+        onMessagesPersisted?.(next);
+        return next;
+      });
     } catch (err) {
+      setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
       const message = err instanceof HttpError
         ? err.apiError.message
         : err instanceof Error
@@ -259,75 +259,38 @@ export function ChatPanel({
     }
   }
 
-  // ── Context-aware suggested questions ──────────────────────────────────────
+  // ── Context-aware suggested questions (refresh as conversation grows) ─────
 
-  const suggestedQuestions = useMemo((): string[] => {
-    const qs: string[] = [];
+  const askedQuestions = useMemo(
+    () => messages.filter((m) => m.role === 'user').map((m) => m.content),
+    [messages],
+  );
 
-    if (isRecording) {
-      qs.push('What has been discussed so far?');
-      qs.push('Any action items or decisions mentioned yet?');
-    }
+  const suggestedQuestions = useMemo(
+    () => getSuggestedQuestions({
+      notes,
+      transcriptSegments,
+      askedQuestions,
+      isRecording,
+      max: 3,
+    }),
+    [notes, transcriptSegments, askedQuestions, isRecording],
+  );
 
-    // Helper: trim a string to a readable snippet (≤ 40 chars)
-    const snippet = (s: string, maxWords = 6) => {
-      const words = s.replace(/^(we need to|we should|we have to|can you|could you|please|let's)\s+/i, '').trim().split(/\s+/);
-      const phrase = words.slice(0, maxWords).join(' ').toLowerCase();
-      return phrase.length > 40 ? phrase.slice(0, 40) + '…' : phrase;
-    };
-
-    const actions   = notes.filter((n) => n.type === 'action');
-    const decisions = notes.filter((n) => n.type === 'decision');
-    const insights  = notes.filter((n) => n.type === 'insight');
-
-    // Question from the first action item
-    if (actions[0] && qs.length < 3) {
-      qs.push(`Who is responsible for "${snippet(actions[0].content)}"?`);
-    }
-
-    // Question from the first decision
-    if (decisions[0] && qs.length < 3) {
-      qs.push(`What led to the decision about "${snippet(decisions[0].content, 5)}"?`);
-    }
-
-    // Question from the first insight
-    if (insights[0] && qs.length < 3) {
-      qs.push(`Can you expand on "${snippet(insights[0].content, 5)}"?`);
-    }
-
-    // Aggregate fallbacks drawn from what actually exists in the session
-    if (actions.length > 1 && qs.length < 3) {
-      qs.push(`List all ${actions.length} action items and their owners.`);
-    }
-    if (decisions.length > 1 && qs.length < 3) {
-      qs.push(`Summarise all ${decisions.length} decisions made in this session.`);
-    }
-    if (transcriptSegments.length > 0 && qs.length < 3) {
-      qs.push('What topics were discussed and in what order?');
-    }
-
-    // Generic last-resort (only if we still don't have 3)
-    const generic = isRecording
-      ? ['What open questions came up?', 'Summarise the last few minutes.']
-      : [
-          'What were the main outcomes of this session?',
-          'Were any deadlines or timelines mentioned?',
-          'What open questions remain unresolved?',
-        ];
-    for (const g of generic) {
-      if (qs.length >= 3) break;
-      if (!qs.includes(g)) qs.push(g);
-    }
-
-    return qs.slice(0, 3);
-  }, [notes, transcriptSegments, isRecording]);
+  const showSuggestions = suggestedQuestions.length > 0;
+  const exploredAll = messages.length > 0 && !hasMoreToExplore({
+    notes,
+    transcriptSegments,
+    askedQuestions,
+    isRecording,
+  });
 
   // ── Empty state ─────────────────────────────────────────────────────────────
 
   if (!hasContext) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 px-8 py-16 text-center">
-        <div className="w-14 h-14 rounded-full bg-[var(--nl-color-paper-sunken)] flex items-center justify-center">
+      <div className="flex flex-col items-center justify-center flex-1 w-full min-h-0 min-w-0 px-7 py-12">
+        <div className="w-14 h-14 rounded-full border border-[var(--nl-border-default)] bg-[var(--nl-color-paper-raised)] flex items-center justify-center">
           {isRecording ? (
             <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" aria-hidden="true" />
           ) : (
@@ -336,11 +299,11 @@ export function ChatPanel({
             </svg>
           )}
         </div>
-        <div>
-          <p className="font-serif text-[17px] text-[var(--nl-color-ink-tertiary)] mb-1">
+        <div className="max-w-sm">
+          <p className="font-serif text-[17px] text-[var(--nl-color-ink-primary)] mb-2">
             {isRecording ? 'Listening…' : 'No notes to chat with yet'}
           </p>
-          <p className="text-[12px] font-mono text-[var(--nl-color-ink-disabled)] leading-relaxed max-w-xs">
+          <p className="text-[12px] font-sans text-[var(--nl-color-ink-tertiary)] leading-relaxed mx-auto">
             {isRecording
               ? 'Start speaking — context appears here within a few seconds. You can ask questions while the meeting continues.'
               : 'Record a session first. Once speech is captured, come back here to ask questions.'}
@@ -353,10 +316,10 @@ export function ChatPanel({
   // ── Chat UI ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col flex-1 h-full w-full min-h-0 min-w-0">
 
-      {/* Context header */}
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-[var(--nl-border-subtle)] bg-[var(--nl-color-paper-raised)] shrink-0">
+      {/* Context header — full panel width */}
+      <div className="flex items-center gap-3 px-7 py-3 border-b border-[var(--nl-border-subtle)] bg-[var(--nl-color-paper-base)] shrink-0 w-full min-w-0">
         <div className="flex-1 min-w-0">
           <p className="text-[12px] font-sans font-medium text-[var(--nl-color-ink-secondary)] truncate">
             {sessionTitle || 'Untitled session'}
@@ -381,37 +344,49 @@ export function ChatPanel({
       </div>
 
       {/* Message list */}
-      <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
+      <div className={cn(
+        'flex-1 overflow-y-auto px-7 py-6 space-y-5 w-full min-w-0',
+        messages.length === 0 && 'flex flex-col justify-center',
+      )}>
 
-        {/* Welcome hint (shown before first message) */}
-        {messages.length === 0 && (
-          <div className="text-center py-8 space-y-3">
+        {/* Initial suggested questions — before first message */}
+        {messages.length === 0 && showSuggestions && (
+          <div className="space-y-3 w-full py-4">
             <p className="font-serif text-[16px] text-[var(--nl-color-ink-tertiary)]">
               {isRecording ? 'Ask while the meeting is in progress' : 'Ask anything about this meeting'}
             </p>
             {isRecording && (
-              <p className="text-[11px] font-mono text-[var(--nl-color-ink-disabled)] max-w-sm mx-auto leading-relaxed">
+              <p className="text-[11px] font-mono text-[var(--nl-color-ink-disabled)] leading-relaxed mb-1">
                 Answers use everything captured so far, including speech still being transcribed.
               </p>
             )}
-            <div className="flex flex-col gap-2 max-w-xs mx-auto">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 w-full">
               {suggestedQuestions.map((q) => (
                 <button
                   key={q}
                   type="button"
                   onClick={() => { setInput(q); inputRef.current?.focus(); }}
+                  disabled={loading}
                   className={cn(
                     'text-left px-3.5 py-2 rounded-[var(--nl-radius-md)]',
                     'text-[12px] font-sans text-[var(--nl-color-ink-secondary)]',
                     'border border-[var(--nl-border-default)] bg-[var(--nl-color-paper-raised)]',
                     'hover:border-[var(--nl-color-accent-border)] hover:bg-[var(--nl-color-accent-subtle)]',
-                    'transition-colors',
+                    'transition-colors disabled:opacity-50',
                   )}
                 >
                   {q}
                 </button>
               ))}
             </div>
+          </div>
+        )}
+
+        {messages.length === 0 && !showSuggestions && (
+          <div className="text-center py-8">
+            <p className="font-serif text-[16px] text-[var(--nl-color-ink-tertiary)]">
+              Type a question about this session
+            </p>
           </div>
         )}
 
@@ -439,16 +414,49 @@ export function ChatPanel({
           </p>
         )}
 
+        {/* Follow-up suggestions — after each turn until scope is covered */}
+        {messages.length > 0 && showSuggestions && (
+          <div className="space-y-2 py-2 w-full">
+            <p className="text-[10px] font-mono uppercase tracking-wider text-[var(--nl-color-ink-disabled)]">
+              Explore further
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 w-full">
+              {suggestedQuestions.map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  onClick={() => { setInput(q); inputRef.current?.focus(); }}
+                  disabled={loading}
+                  className={cn(
+                    'text-left px-3.5 py-2 rounded-[var(--nl-radius-md)]',
+                    'text-[12px] font-sans text-[var(--nl-color-ink-secondary)]',
+                    'border border-[var(--nl-border-default)] bg-[var(--nl-color-paper-raised)]',
+                    'hover:border-[var(--nl-color-accent-border)] hover:bg-[var(--nl-color-accent-subtle)]',
+                    'transition-colors disabled:opacity-50',
+                  )}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {exploredAll && (
+          <p className="text-center text-[11px] font-mono text-[var(--nl-color-ink-disabled)] py-2">
+            You&apos;ve covered the main topics in this session. Ask anything else below.
+          </p>
+        )}
+
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
-      <div className="shrink-0 px-4 py-3 border-t border-[var(--nl-border-subtle)] bg-[var(--nl-color-paper-raised)]">
+      {/* Input — full panel width */}
+      <div className="shrink-0 w-full min-w-0 border-t border-[var(--nl-border-subtle)] bg-[var(--nl-color-paper-base)]">
         <div className={cn(
-          'flex items-end gap-2 rounded-[var(--nl-radius-lg)]',
-          'border border-[var(--nl-border-default)] bg-[var(--nl-color-paper-base)]',
-          'px-3 py-2',
-          'focus-within:border-[var(--nl-color-accent-border)]',
+          'flex items-end gap-3 w-full min-w-0',
+          'px-7 py-3',
+          'focus-within:bg-[var(--nl-color-paper-raised)]',
           'transition-colors',
         )}>
           <textarea
@@ -489,7 +497,7 @@ export function ChatPanel({
             </svg>
           </button>
         </div>
-        <p className="text-[9px] font-mono text-[var(--nl-color-ink-disabled)] mt-1.5 px-1">
+        <p className="text-[9px] font-mono text-[var(--nl-color-ink-disabled)] mt-1.5 px-7 pb-3">
           {isRecording
             ? 'Context updates live as you speak · answers cite captured sources only'
             : 'Answers are grounded in this session only · every claim cites the exact source'}

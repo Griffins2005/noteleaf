@@ -2,22 +2,14 @@
  * @file useSpeechRecognition.ts
  * @description Thin wrapper around the browser's Web Speech API.
  *
- * Replaces the NVIDIA NIM WebSocket + AudioWorklet pipeline for STT.
- * Works in Chrome, Edge, and Safari with no server configuration.
- *
- * Behaviour:
- *   - Interim results feed the live transcript bar.
- *   - Final results go to the note classifier.
- *   - SpeechRecognition stops after silence; onend auto-restarts it so
- *     recording feels continuous.
- *   - stop() awaits the final onend so all results are flushed before
- *     the caller reads session state.
+ * Long sessions: Chrome's backend often throws `network` after a few minutes.
+ * We recover automatically (restart on end) and proactively rotate the recognition
+ * instance every ~90s so sessions can run for an hour+.
  */
 
 import { useRef, useCallback } from 'react';
 
 // ─── Web Speech API type declarations ────────────────────────────────────────
-// TypeScript's built-in DOM lib does not fully expose these yet.
 
 interface ISpeechRecognitionAlternative {
   readonly transcript: string;
@@ -70,6 +62,17 @@ declare global {
   }
 }
 
+/** Errors that should restart recognition, not end the session. */
+const RECOVERABLE_ERRORS = new Set([
+  'network',
+  'service-not-available',
+  'audio-capture',
+  'aborted',
+]);
+
+/** Proactively restart before Chrome's ~4–5 min network timeout. */
+const PROACTIVE_RESTART_MS = 90_000;
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export interface UseSpeechRecognitionOptions {
@@ -80,7 +83,10 @@ export interface UseSpeechRecognitionOptions {
     endOffsetSeconds: number,
     confidence: number,
   ) => void;
+  /** Fatal — stops recording. */
   onError: (code: string, message: string) => void;
+  /** Transient — session continues, UI may show a brief warning. */
+  onRecoverableError?: (code: string) => void;
 }
 
 export interface UseSpeechRecognitionReturn {
@@ -92,19 +98,22 @@ export interface UseSpeechRecognitionReturn {
 export function useSpeechRecognition(
   options: UseSpeechRecognitionOptions,
 ): UseSpeechRecognitionReturn {
-  const recognitionRef  = useRef<ISpeechRecognition | null>(null);
-  const sessionStartRef = useRef<number>(0);
-  const activeRef       = useRef(false);
-  const stopResolveRef  = useRef<(() => void) | null>(null);
-  const langRef         = useRef('en-US');
+  const recognitionRef       = useRef<ISpeechRecognition | null>(null);
+  const sessionStartRef      = useRef<number>(0);
+  const activeRef            = useRef(false);
+  const stopResolveRef       = useRef<(() => void) | null>(null);
+  const langRef              = useRef('en-US');
+  const proactiveRestartRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+  const restartBackoffRef    = useRef(80);
 
-  // Stable refs for callbacks — avoids stale closures without dep churn.
-  const onPartialRef = useRef(options.onPartialTranscript);
-  const onFinalRef   = useRef(options.onFinalTranscript);
-  const onErrorRef   = useRef(options.onError);
-  onPartialRef.current = options.onPartialTranscript;
-  onFinalRef.current   = options.onFinalTranscript;
-  onErrorRef.current   = options.onError;
+  const onPartialRef     = useRef(options.onPartialTranscript);
+  const onFinalRef       = useRef(options.onFinalTranscript);
+  const onErrorRef       = useRef(options.onError);
+  const onRecoverableRef = useRef(options.onRecoverableError);
+  onPartialRef.current     = options.onPartialTranscript;
+  onFinalRef.current       = options.onFinalTranscript;
+  onErrorRef.current       = options.onError;
+  onRecoverableRef.current = options.onRecoverableError;
 
   const getAPI = (): ISpeechRecognitionConstructor | null => {
     if (typeof window === 'undefined') return null;
@@ -112,6 +121,25 @@ export function useSpeechRecognition(
   };
 
   const isSupported = !!getAPI();
+
+  const clearProactiveRestart = () => {
+    if (proactiveRestartRef.current) {
+      clearInterval(proactiveRestartRef.current);
+      proactiveRestartRef.current = null;
+    }
+  };
+
+  const scheduleProactiveRestart = useCallback(() => {
+    clearProactiveRestart();
+    proactiveRestartRef.current = setInterval(() => {
+      if (!activeRef.current || !recognitionRef.current) return;
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        /* onend restarts */
+      }
+    }, PROACTIVE_RESTART_MS);
+  }, []);
 
   const createAndStart = useCallback(() => {
     const API = getAPI();
@@ -126,6 +154,7 @@ export function useSpeechRecognition(
     recognition.maxAlternatives = 1;
 
     recognition.onresult = (event: ISpeechRecognitionEvent) => {
+      restartBackoffRef.current = 80;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
         if (!result) continue;
@@ -134,7 +163,7 @@ export function useSpeechRecognition(
 
         if (result.isFinal) {
           const endOffset   = (Date.now() - sessionStartRef.current) / 1000;
-          const startOffset = Math.max(0, endOffset - 3); // approximate
+          const startOffset = Math.max(0, endOffset - 3);
           onFinalRef.current(alt.transcript, startOffset, endOffset, alt.confidence || 1.0);
         } else {
           onPartialRef.current(alt.transcript);
@@ -143,15 +172,31 @@ export function useSpeechRecognition(
     };
 
     recognition.onerror = (event: ISpeechRecognitionErrorEvent) => {
-      if (event.error === 'no-speech' || event.error === 'aborted') return;
-      const code = event.error === 'not-allowed' ? 'permission-denied' : 'STT_ERROR';
-      onErrorRef.current(code, `Speech recognition error: ${event.error}`);
+      if (event.error === 'no-speech') return;
+
+      if (event.error === 'not-allowed') {
+        activeRef.current = false;
+        clearProactiveRestart();
+        onErrorRef.current('permission-denied', 'Microphone access denied.');
+        return;
+      }
+
+      if (RECOVERABLE_ERRORS.has(event.error)) {
+        onRecoverableRef.current?.(event.error);
+        try { recognition.stop(); } catch { /* onend will restart */ }
+        return;
+      }
+
+      activeRef.current = false;
+      clearProactiveRestart();
+      onErrorRef.current('STT_ERROR', `Speech recognition error: ${event.error}`);
     };
 
     recognition.onend = () => {
       if (activeRef.current) {
-        // Auto-restart to maintain continuous listening.
-        setTimeout(createAndStart, 80);
+        const delay = restartBackoffRef.current;
+        restartBackoffRef.current = Math.min(delay * 1.5, 3000);
+        setTimeout(createAndStart, delay);
       } else {
         stopResolveRef.current?.();
         stopResolveRef.current = null;
@@ -161,22 +206,27 @@ export function useSpeechRecognition(
     try {
       recognition.start();
     } catch {
-      // Ignore "already started" errors on rapid start/stop.
+      if (activeRef.current) {
+        setTimeout(createAndStart, restartBackoffRef.current);
+      }
     }
-  }, []); // no deps — reads everything from refs
+  }, []);
 
   const start = useCallback(
     (lang: string) => {
-      langRef.current        = lang;
-      activeRef.current      = true;
+      langRef.current         = lang;
+      activeRef.current       = true;
+      restartBackoffRef.current = 80;
       sessionStartRef.current = Date.now();
       createAndStart();
+      scheduleProactiveRestart();
     },
-    [createAndStart],
+    [createAndStart, scheduleProactiveRestart],
   );
 
   const stop = useCallback((): Promise<void> => {
     activeRef.current = false;
+    clearProactiveRestart();
     return new Promise<void>((resolve) => {
       if (!recognitionRef.current) { resolve(); return; }
       stopResolveRef.current = resolve;

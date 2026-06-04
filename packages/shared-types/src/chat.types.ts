@@ -46,6 +46,9 @@ export interface ChatMessage {
 // ─── API contract ─────────────────────────────────────────────────────────────
 
 export interface AskNotesRequest {
+  /** Session the question belongs to — used to persist chat history. */
+  sessionId: string;
+
   question: string;
 
   /** Notes from the current session, sent by the client. */

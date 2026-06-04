@@ -1,29 +1,41 @@
 'use client';
 
-import { getMeetingPhase, MEETING_PHASES, type MeetingPhaseInput } from '@/lib/meetingPhase';
+import {
+  getMeetingPhase,
+  MEETING_PHASES,
+  type MeetingPhaseActionId,
+  type MeetingPhaseInput,
+} from '@/lib/meetingPhase';
 import { cn } from '@/lib/cn';
 
 interface MeetingPhaseGuideProps extends MeetingPhaseInput {
   className?: string;
+  onPhaseAction?: (actionId: MeetingPhaseActionId) => void;
+  isRecordingBlocked?: boolean;
 }
 
-export function MeetingPhaseGuide(props: MeetingPhaseGuideProps) {
-  const phase = getMeetingPhase(props);
+export function MeetingPhaseGuide({
+  onPhaseAction,
+  isRecordingBlocked = false,
+  className,
+  ...phaseInput
+}: MeetingPhaseGuideProps) {
+  const phase = getMeetingPhase(phaseInput);
   const active = MEETING_PHASES.find((s) => s.id === phase)!;
+  const activeIndex = MEETING_PHASES.findIndex((s) => s.id === phase);
 
   return (
     <div
       className={cn(
         'mx-7 mb-4 px-4 py-3 rounded-[var(--nl-radius-md)]',
         'border border-[var(--nl-border-subtle)] bg-[var(--nl-color-paper-sunken)]',
-        props.className,
+        className,
       )}
     >
       <div className="flex flex-wrap items-center gap-2 mb-2">
         {MEETING_PHASES.map((step, index) => {
           const isActive = step.id === phase;
-          const isPast =
-            MEETING_PHASES.findIndex((s) => s.id === phase) > index;
+          const isPast = activeIndex > index;
 
           return (
             <div key={step.id} className="flex items-center gap-2">
@@ -53,9 +65,35 @@ export function MeetingPhaseGuide(props: MeetingPhaseGuideProps) {
           );
         })}
       </div>
+
       <p className="text-[11px] font-sans text-[var(--nl-color-ink-secondary)] leading-relaxed">
         {active.hint}
       </p>
+
+      {onPhaseAction && active.actions.length > 0 && (
+        <div className="flex flex-wrap gap-2 mt-3">
+          {active.actions.map((action) => {
+            const disabled = action.id === 'start-capture' && isRecordingBlocked;
+            return (
+              <button
+                key={action.id}
+                type="button"
+                disabled={disabled}
+                onClick={() => onPhaseAction(action.id)}
+                className={cn(
+                  'px-3 py-1.5 rounded-[var(--nl-radius-sm)] text-[10px] font-mono font-medium',
+                  'border transition-colors',
+                  disabled
+                    ? 'opacity-50 cursor-not-allowed border-[var(--nl-border-subtle)] text-[var(--nl-color-ink-disabled)]'
+                    : 'border-[var(--nl-color-accent-border)] bg-[var(--nl-color-paper-base)] text-[var(--nl-color-accent-primary)] hover:bg-[var(--nl-color-accent-subtle)]',
+                )}
+              >
+                {action.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

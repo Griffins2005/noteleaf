@@ -169,18 +169,19 @@ describe('buildNoteFromTranscript', () => {
     expect(note.type).toBe('action');
     expect(note.sessionId).toBe('test-session-id');
     expect(note.sessionOffsetSeconds).toBe(42);
-    expect(note.content).toMatch(/^We/); // First char capitalised
+    expect(note.content).toContain('follow-up');
+    expect(note.content).toContain('Friday');
     expect(typeof note.id).toBe('string');
     expect(note.id).toHaveLength(36); // UUID v4
     expect(typeof note.capturedAt).toBe('string'); // ISO timestamp
   });
 
-  it('capitalises the first character of content', () => {
+  it('writes human-style summary content', () => {
     const note = buildNoteFromTranscript(
       { transcript: 'the dashboard is looking great', sessionId: 's1', sessionOffsetSeconds: 0 },
       false,
     );
-    expect(note.content.charAt(0)).toBe('T');
+    expect(note.content).toBe('The dashboard is looking great');
   });
 
   it('returns empty tags when tagging is disabled', () => {

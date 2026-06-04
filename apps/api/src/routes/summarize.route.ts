@@ -88,17 +88,29 @@ export async function aiSummarizeRoute(fastify: FastifyInstance): Promise<void> 
         }) as unknown as SummarizeResponse;
       }
 
-      const summary = await nvidiaLlmService.summariseSession({
-        sessionId,
-        notes,
-        transcriptExcerpt,
-        ...(transcriptSegments !== undefined && { transcriptSegments }),
-        ...(sessionTitle !== undefined && { sessionTitle }),
-      });
+      let summary;
+      try {
+        summary = await nvidiaLlmService.summariseSession({
+          sessionId,
+          notes,
+          transcriptExcerpt,
+          ...(transcriptSegments !== undefined && { transcriptSegments }),
+          ...(sessionTitle !== undefined && { sessionTitle }),
+        });
+      } catch (err) {
+        logger.error({ err, sessionId }, 'AI summarisation failed');
+        return reply.code(502).send({
+          success: false,
+          error: {
+            code: 'AI_UNAVAILABLE',
+            message: err instanceof Error ? err.message : 'AI recap could not be generated. Try again.',
+          },
+          timestamp: new Date().toISOString(),
+        }) as unknown as SummarizeResponse;
+      }
 
-      // Persist the summary and update the session status atomically.
-      await fastify.db.$transaction([
-        // Upsert: if a summary already exists for this session, replace it.
+      // Return recap to client immediately; persist in background.
+      void fastify.db.$transaction([
         fastify.db.aiSummary.upsert({
           where: { sessionId },
           create: {
@@ -111,7 +123,7 @@ export async function aiSummarizeRoute(fastify: FastifyInstance): Promise<void> 
             modelUsed: summary.modelUsed,
           },
           update: {
-            id: uuidv4(),  // New ID on regeneration
+            id: uuidv4(),
             overview: summary.overview,
             decisions: summary.decisions,
             actionItems: summary.actionItems,
@@ -119,23 +131,24 @@ export async function aiSummarizeRoute(fastify: FastifyInstance): Promise<void> 
             modelUsed: summary.modelUsed,
           },
         }),
-        // Mark the session as summarised.
         fastify.db.session.update({
           where: { id: sessionId },
           data: { status: 'SUMMARISED' },
         }),
-      ]);
+      ]).then(() => {
+        logger.info(
+          { sessionId, userUuid, summaryId: summary.id },
+          'AI summary persisted to database',
+        );
+      }).catch((err: unknown) => {
+        logger.error({ err, sessionId }, 'Failed to persist AI summary');
+      });
 
-      logger.info(
-        { sessionId, userUuid, summaryId: summary.id },
-        'AI summary persisted to database',
-      );
-
-      return {
+      return reply.code(200).send({
         success: true,
         data: summary,
         timestamp: new Date().toISOString(),
-      };
+      }) as unknown as SummarizeResponse;
     },
   );
 }

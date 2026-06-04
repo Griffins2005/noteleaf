@@ -1,13 +1,19 @@
 'use client';
 
-import { useState, useCallback, useRef, useMemo } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 // Feature components
 import Link from 'next/link';
 import { ChatPanel } from '@/features/chat/ChatPanel';
-import { MeetingPhaseGuide } from '@/features/meeting/components/MeetingPhaseGuide';
-import { PostMeetingActions } from '@/features/meeting/components/PostMeetingActions';
+import { TabCoachPopover } from '@/features/meeting/components/TabCoachPopover';
+import { getMeetingPhase } from '@/lib/meetingPhase';
+import {
+  dismissTabCoach,
+  getTabCoachMessage,
+  wasTabCoachDismissed,
+  type CoachTab,
+} from '@/lib/tabCoachMessages';
 import { NavigationSidebar } from '@/components/layout/NavigationSidebar';
 import { SessionTranscriptPanel } from '@/components/layout/SessionTranscriptPanel';
 import { LiveTranscriptBar } from '@/features/recording/components/LiveTranscriptBar';
@@ -34,13 +40,13 @@ import { http, HttpError } from '@/lib/http.client';
 import { exportFormatter } from '@/lib/exportFormatter';
 import {
   hasSummarizeContext,
-  notesForSummarize,
-  segmentsForSummarize,
+  buildSummarizePayload,
   hasChatContext,
 } from '@/lib/sessionContext';
+import { buildInstantRecap } from '@/lib/instantRecap';
 
 // Types
-import type { AiSummary, SummarizeRequest, TranscriptSegment, NoteType } from '@noteleaf/shared-types';
+import type { AiSummary, SummarizeRequest, TranscriptSegment, NoteType, ChatMessage } from '@noteleaf/shared-types';
 import { cn } from '@/lib/cn';
 
 // ─── Settings panel ───────────────────────────────────────────────────────────
@@ -196,15 +202,23 @@ function SettingsPanel() {
 
 type ActiveTab = 'notes' | 'transcript' | 'summary' | 'chat' | 'settings';
 
+const LAST_SESSION_KEY = 'nl_last_session';
+
 export function NotepadShell() {
   const [activeTab, setActiveTab]               = useState<ActiveTab>('notes');
   const [aiState, setAiState]                   = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [aiEnhancing, setAiEnhancing]           = useState(false);
   const [aiSummary, setAiSummary]               = useState<AiSummary | undefined>();
-  const [showDownloadBanner, setShowDownloadBanner] = useState(false);
+  const [tabCoach, setTabCoach]                 = useState<{
+    tab: CoachTab;
+    title: string;
+    message: string;
+  } | null>(null);
   const notesEndRef = useRef<HTMLDivElement>(null);
 
   const qc = useQueryClient();
   const [noteSearch, setNoteSearch] = useState('');
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   // ── Stores ─────────────────────────────────────────────────────────────
 
@@ -233,6 +247,7 @@ export function NotepadShell() {
     liveTranscript,
     elapsedSeconds,
     error: recordingError,
+    sttWarning,
     startRecording,
     stopRecording,
   } = useRecordingState();
@@ -280,14 +295,24 @@ export function NotepadShell() {
     createSessionMutation.mutate({ id: newId, title: '' });
     setAiState('idle');
     setAiSummary(undefined);
-    setShowDownloadBanner(false);
+    setAiEnhancing(false);
+    setTabCoach(null);
+    setChatMessages([]);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(LAST_SESSION_KEY, newId);
+    }
   }
 
   async function handleSelectSession(sessionId: string) {
     if (sessionId === activeSessionId) return;
     setAiState('idle');
     setAiSummary(undefined);
-    setShowDownloadBanner(false);
+    setAiEnhancing(false);
+    setTabCoach(null);
+
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(LAST_SESSION_KEY, sessionId);
+    }
 
     try {
       const session = await sessionsApi.get(sessionId);
@@ -296,15 +321,41 @@ export function NotepadShell() {
         session.notes,
         session.transcript ?? '',
         session.transcriptSegments ?? [],
+        {
+          userUuid: session.userUuid,
+          title: session.title,
+          durationSeconds: session.durationSeconds,
+          status: session.status,
+          hasAiSummary: !!session.aiSummary,
+          createdAt: session.createdAt,
+          updatedAt: session.updatedAt,
+        },
       );
+      setChatMessages(session.chatMessages ?? []);
       if (session.aiSummary) {
         setAiState('success');
         setAiSummary(session.aiSummary);
       }
     } catch {
       setActiveSession(sessionId, [], '', []);
+      setChatMessages([]);
     }
   }
+
+  // Restore last-open session after refresh
+  useEffect(() => {
+    if (!userId || apiSessions.length === 0 || activeSessionId) return;
+
+    const lastId = typeof window !== 'undefined'
+      ? localStorage.getItem(LAST_SESSION_KEY)
+      : null;
+    const target = lastId && apiSessions.some((s) => s.id === lastId)
+      ? lastId
+      : apiSessions[0]!.id;
+
+    void handleSelectSession(target);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- run once when session list loads
+  }, [userId, apiSessions.length, activeSessionId]);
 
   const generateAiNotes = useCallback(async (options?: {
     sessionId?: string | null;
@@ -312,37 +363,50 @@ export function NotepadShell() {
     transcript?: string;
     transcriptSegments?: TranscriptSegment[];
     sessionTitle?: string;
+    /** Keep instant draft visible while the LLM runs. */
+    background?: boolean;
   }): Promise<AiSummary | undefined> => {
     const sessionId          = options?.sessionId ?? activeSessionId;
     const notes              = options?.notes ?? activeNotes;
     const transcript         = options?.transcript ?? activeTranscript;
     const transcriptSegments = options?.transcriptSegments ?? activeTranscriptSegments;
+    const background         = options?.background ?? false;
 
     if (!sessionId || !hasSummarizeContext(notes, transcript, transcriptSegments)) return undefined;
-    setAiState('loading');
+
+    if (background) {
+      setAiEnhancing(true);
+    } else {
+      setAiState('loading');
+      setAiEnhancing(false);
+    }
 
     try {
-      const apiNotes = notesForSummarize(notes);
-      const apiSegments = segmentsForSummarize(transcriptSegments);
+      const payload = buildSummarizePayload(notes, transcript, transcriptSegments);
 
       const summary = await http.post<AiSummary>('/api/ai/summarize', {
         sessionId,
-        notes: apiNotes,
-        transcriptExcerpt: transcript.slice(0, 1500),
-        transcriptSegments: apiSegments.slice(0, 80),
+        ...payload,
         sessionTitle: options?.sessionTitle ?? activeItem?.title,
       } satisfies SummarizeRequest);
 
       setAiSummary(summary);
       setAiState('success');
+      setAiEnhancing(false);
       setTimeout(() => notesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       return summary;
     } catch (err) {
       console.error(
         '[AI summarize]',
-        err instanceof HttpError ? err.apiError.message : err,
+        err instanceof HttpError
+          ? `${err.apiError.code}: ${err.apiError.message}`
+          : err,
       );
-      setAiState('error');
+      if (background) {
+        setAiEnhancing(false);
+      } else {
+        setAiState('error');
+      }
       return undefined;
     }
   }, [activeItem?.title, activeNotes, activeSessionId, activeTranscript, activeTranscriptSegments]);
@@ -379,11 +443,12 @@ export function NotepadShell() {
   }
 
   async function handleTitleBlur() {
-    if (activeSessionId && activeItem?.title) {
-      try {
-        await sessionsApi.update(activeSessionId, { title: activeItem.title });
-      } catch { /* non-fatal */ }
-    }
+    if (!activeSessionId) return;
+    const title = (activeItem?.title ?? '').trim();
+    try {
+      await sessionsApi.update(activeSessionId, { title });
+      void qc.invalidateQueries({ queryKey: ['sessions', userId] });
+    } catch { /* non-fatal */ }
   }
 
   function handleExport() {
@@ -415,29 +480,48 @@ export function NotepadShell() {
 
     void qc.invalidateQueries({ queryKey: ['sessions', userId] });
 
-    const summary = await generateAiNotes({
-      sessionId: stoppedSessionId,
-      notes: stoppedNotes,
-      transcript: stoppedTranscript,
-      transcriptSegments: stoppedTranscriptSegments,
-      sessionTitle: rawTitle,
-    });
+    if (hasContent && stoppedSessionId) {
+      setAiSummary(buildInstantRecap(stoppedSessionId, stoppedNotes));
+      setAiState('success');
+      setActiveTab('summary');
+      if (!wasTabCoachDismissed(stoppedSessionId, 'summary')) {
+        setTabCoach({ tab: 'summary', ...getTabCoachMessage('summary', 'after') });
+      }
+    }
 
     const finalTitle = rawTitle.trim() || generateTitle({
-      summary,
       notes: stoppedNotes,
       transcriptSegments: stoppedTranscriptSegments,
     });
 
     if (!rawTitle.trim() && finalTitle && stoppedSessionId) {
       setActiveSessionTitle(finalTitle);
-      try { await sessionsApi.update(stoppedSessionId, { title: finalTitle }); } catch { /* non-fatal */ }
+      void sessionsApi.update(stoppedSessionId, { title: finalTitle }).catch(() => { /* non-fatal */ });
     }
 
-    void qc.invalidateQueries({ queryKey: ['sessions', userId] });
-
-    // Show download banner if there's content to save
-    if (hasContent) setShowDownloadBanner(true);
+    if (hasContent) {
+      void generateAiNotes({
+        sessionId: stoppedSessionId,
+        notes: stoppedNotes,
+        transcript: stoppedTranscript,
+        transcriptSegments: stoppedTranscriptSegments,
+        sessionTitle: rawTitle.trim() || finalTitle,
+        background: true,
+      }).then((summary) => {
+        if (!rawTitle.trim() && summary && stoppedSessionId) {
+          const aiTitle = generateTitle({
+            summary,
+            notes: stoppedNotes,
+            transcriptSegments: stoppedTranscriptSegments,
+          });
+          if (aiTitle !== finalTitle) {
+            setActiveSessionTitle(aiTitle);
+            void sessionsApi.update(stoppedSessionId, { title: aiTitle }).catch(() => { /* non-fatal */ });
+          }
+        }
+        void qc.invalidateQueries({ queryKey: ['sessions', userId] });
+      });
+    }
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────
@@ -454,6 +538,37 @@ export function NotepadShell() {
     fullTranscript: activeTranscript,
     isRecording,
   });
+
+  const meetingPhase = getMeetingPhase({
+    isRecording,
+    hasSessionContent,
+    recordingStatus,
+  });
+
+  function handleTabSelect(tab: ActiveTab) {
+    if (tab === 'settings') {
+      setActiveTab(tab);
+      setTabCoach(null);
+      return;
+    }
+
+    setActiveTab(tab);
+
+    const coachTab = tab as CoachTab;
+    if (wasTabCoachDismissed(activeSessionId, coachTab)) {
+      setTabCoach(null);
+      return;
+    }
+
+    setTabCoach({ tab: coachTab, ...getTabCoachMessage(coachTab, meetingPhase) });
+  }
+
+  function dismissTabCoachPopover() {
+    if (activeTab !== 'settings') {
+      dismissTabCoach(activeSessionId, activeTab as CoachTab);
+    }
+    setTabCoach(null);
+  }
 
   function formatDuration(secs: number): string {
     const m = Math.floor(secs / 60);
@@ -473,22 +588,6 @@ export function NotepadShell() {
     { id: 'summary',    label: 'Recap'      },
     { id: 'chat',       label: 'Ask notes'  },
   ];
-
-  const sessionExportInput = useMemo(() => ({
-    title: activeItem?.title ?? '',
-    notes: activeNotes,
-    transcript: activeTranscript,
-    transcriptSegments: activeTranscriptSegments,
-    aiSummary,
-    durationSeconds: elapsedSeconds,
-  }), [
-    activeItem?.title,
-    activeNotes,
-    activeTranscript,
-    activeTranscriptSegments,
-    aiSummary,
-    elapsedSeconds,
-  ]);
 
   // ── Render ─────────────────────────────────────────────────────────────
 
@@ -514,7 +613,7 @@ export function NotepadShell() {
             <header className="flex items-center gap-4 px-8 py-5 border-b border-[var(--nl-border-subtle)] shrink-0">
               <button
                 type="button"
-                onClick={() => setActiveTab('notes')}
+                onClick={() => handleTabSelect('notes')}
                 aria-label="Back"
                 className="w-9 h-9 flex items-center justify-center rounded-[var(--nl-radius-md)] text-[var(--nl-color-ink-tertiary)] hover:text-[var(--nl-color-ink-primary)] hover:bg-[var(--nl-color-paper-sunken)] transition-colors shrink-0"
               >
@@ -571,66 +670,54 @@ export function NotepadShell() {
               </div>
 
               {/* Tab nav */}
-              <nav className="flex gap-0" aria-label="Session view">
+              <nav className="flex gap-0 border-b border-[var(--nl-border-subtle)]" aria-label="Session view">
                 {SESSION_TABS.map(({ id, label }) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setActiveTab(id)}
-                    aria-current={activeTab === id ? 'page' : undefined}
-                    className={cn(
-                      'relative px-4 py-2 text-[13px] font-sans border-b-2 transition-colors focus-visible:outline-none',
-                      activeTab === id
-                        ? 'border-[var(--nl-color-accent-primary)] text-[var(--nl-color-ink-primary)] font-medium'
-                        : 'border-transparent text-[var(--nl-color-ink-tertiary)] hover:text-[var(--nl-color-ink-secondary)]',
-                    )}
-                  >
-                    {label}
-                    {id === 'summary' && aiState === 'success' && activeTab !== 'summary' && (
-                      <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-[var(--nl-color-accent-primary)]" aria-label="Summary ready" />
-                    )}
-                    {id === 'summary' && aiState === 'loading' && activeTab !== 'summary' && (
-                      <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-[var(--nl-color-ink-disabled)] animate-pulse" aria-label="Generating summary" />
-                    )}
-                    {id === 'chat' && chatReady && activeTab !== 'chat' && (
-                      <span
-                        className={cn(
-                          'absolute top-2 right-2 w-1.5 h-1.5 rounded-full',
-                          isRecording ? 'bg-red-500 animate-pulse' : 'bg-[var(--nl-color-accent-primary)]',
-                        )}
-                        aria-label={isRecording ? 'Live — ready to ask' : 'Ready to ask'}
+                  <div key={id} className="relative">
+                    <button
+                      type="button"
+                      onClick={() => handleTabSelect(id)}
+                      aria-current={activeTab === id ? 'page' : undefined}
+                      aria-describedby={tabCoach?.tab === id ? `tab-coach-${id}` : undefined}
+                      className={cn(
+                        'relative px-4 py-2.5 text-[13px] font-sans transition-colors focus-visible:outline-none',
+                        activeTab === id
+                          ? 'text-black font-medium border-b-2 border-[var(--nl-color-navy)] -mb-px'
+                          : 'text-[var(--nl-color-ink-tertiary)] hover:text-black border-b-2 border-transparent -mb-px',
+                      )}
+                    >
+                      {label}
+                      {id === 'summary' && (aiState === 'success' || aiEnhancing) && activeTab !== 'summary' && (
+                        <span className="absolute top-2 right-1 w-1 h-1 rounded-full bg-[var(--nl-color-navy)]" aria-label="Recap ready" />
+                      )}
+                      {id === 'chat' && chatReady && activeTab !== 'chat' && (
+                        <span
+                          className="absolute top-2 right-1 w-1 h-1 rounded-full bg-[var(--nl-color-navy)]"
+                          aria-label={isRecording ? 'Live — ready to ask' : 'Ready to ask'}
+                        />
+                      )}
+                    </button>
+                    {tabCoach?.tab === id && (
+                      <TabCoachPopover
+                        content={tabCoach}
+                        onDismiss={dismissTabCoachPopover}
+                        anchor={id === 'notes' ? 'start' : id === 'chat' ? 'end' : 'center'}
                       />
                     )}
-                  </button>
+                  </div>
                 ))}
               </nav>
-
-              <MeetingPhaseGuide
-                isRecording={isRecording}
-                hasSessionContent={hasSessionContent}
-                recordingStatus={recordingStatus}
-              />
             </header>
 
             {/* Tab content */}
-            <div className="flex flex-1 min-h-0">
+            <div className={cn(
+              'flex flex-1 min-h-0 w-full min-w-0',
+              activeTab === 'chat' && 'flex-col',
+            )}>
 
               {/* ── Notes tab ──────────────────────────────────────────── */}
               {activeTab === 'notes' && (
                 <>
                   <div className="flex flex-col flex-1 min-w-0">
-
-                    {/* Post-meeting workflows — appears after recording stops */}
-                    {showDownloadBanner && hasSessionContent && (
-                      <div className="mx-5 mt-3 shrink-0">
-                        <PostMeetingActions
-                          {...sessionExportInput}
-                          compact
-                          onDismiss={() => setShowDownloadBanner(false)}
-                          onAskNotes={() => setActiveTab('chat')}
-                        />
-                      </div>
-                    )}
 
                     <LiveTranscriptBar transcript={liveTranscript} status={recordingStatus} showTranscript={preferences.showLiveTranscript} />
 
@@ -726,6 +813,12 @@ export function NotepadShell() {
                       );
                     })()}
 
+                    {sttWarning && !recordingError && (
+                      <div role="status" className="mx-5 mb-2 px-4 py-2.5 rounded-[var(--nl-radius-sm)] bg-amber-50 border border-amber-200 text-[11px] font-mono text-amber-800 shrink-0">
+                        {sttWarning}
+                      </div>
+                    )}
+
                     {recordingError && (
                       <div role="alert" className="mx-5 mb-2 px-4 py-2.5 rounded-[var(--nl-radius-sm)] bg-[var(--nl-color-danger-subtle)] border border-red-200 text-[11px] font-mono text-[var(--nl-color-danger)] shrink-0">
                         {recordingError === 'permission-denied'
@@ -747,7 +840,7 @@ export function NotepadShell() {
                             : recordingStatus === 'recording'
                             ? 'Capturing live — switch to Ask notes anytime'
                             : recordingStatus === 'stopping'
-                            ? 'Generating recap…'
+                            ? 'Saving session…'
                             : 'Something went wrong'}
                         </p>
                         <p className="text-[10px] font-mono text-[var(--nl-color-ink-disabled)] mt-0.5">
@@ -800,22 +893,33 @@ export function NotepadShell() {
               {activeTab === 'summary' && (
                 <div className="flex-1 overflow-y-auto px-8 py-6">
                   <div className="max-w-2xl mx-auto space-y-6">
-                    {aiState === 'idle' ? (
+                    {aiState === 'idle' && !hasSessionContent ? (
                       <div className="text-center mt-16 space-y-3">
                         <p className="font-serif text-[18px] text-[var(--nl-color-ink-tertiary)]">No recap yet</p>
                         <p className="text-[12px] font-mono text-[var(--nl-color-ink-disabled)] max-w-sm mx-auto leading-relaxed">
-                          After you stop recording, Noteleaf turns your notes and transcript into a summary with key takeaways and action items.
+                          Record a session first. When you stop, Noteleaf builds a recap with key takeaways and next steps.
                         </p>
                       </div>
+                    ) : aiState === 'idle' && hasSessionContent ? (
+                      <>
+                        <div className="text-center py-8 space-y-3">
+                          <p className="font-serif text-[18px] text-[var(--nl-color-ink-tertiary)]">Recap not generated</p>
+                          <p className="text-[12px] font-mono text-[var(--nl-color-ink-disabled)] max-w-sm mx-auto leading-relaxed">
+                            Generate an AI recap from your notes and transcript, or use Export in the header to share.
+                          </p>
+                          <Button variant="secondary" size="sm" onClick={() => void generateAiNotes()}>
+                            Generate recap
+                          </Button>
+                        </div>
+                      </>
                     ) : (
                       <>
-                        <AiSummaryCard state={aiState} summary={aiSummary} onRetry={() => void generateAiNotes()} />
-                        {aiState === 'success' && hasSessionContent && (
-                          <PostMeetingActions
-                            {...sessionExportInput}
-                            onAskNotes={() => setActiveTab('chat')}
-                          />
-                        )}
+                        <AiSummaryCard
+                          state={aiState}
+                          summary={aiSummary}
+                          isEnhancing={aiEnhancing}
+                          onRetry={() => void generateAiNotes()}
+                        />
                       </>
                     )}
                   </div>
@@ -823,7 +927,10 @@ export function NotepadShell() {
               )}
 
               {/* ── Chat tab ────────────────────────────────────────── */}
-              <div className={cn('flex flex-1 min-h-0', activeTab !== 'chat' && 'hidden')}>
+              <div className={cn(
+                'flex flex-1 min-h-0 w-full min-w-0 flex-col',
+                activeTab !== 'chat' && 'hidden',
+              )}>
                 <ChatPanel
                   sessionId={activeSessionId}
                   notes={activeNotes}
@@ -832,6 +939,8 @@ export function NotepadShell() {
                   liveTranscript={liveTranscript}
                   isRecording={isRecording}
                   sessionTitle={activeItem?.title ?? ''}
+                  initialMessages={chatMessages}
+                  onMessagesPersisted={setChatMessages}
                 />
               </div>
 

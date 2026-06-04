@@ -24,6 +24,7 @@ interface SessionActions {
     notes: Note[],
     transcript: string,
     transcriptSegments?: TranscriptSegment[],
+    meta?: Partial<SessionListItem>,
   ) => void;
   appendNote: (note: Note) => void;
   appendTranscript: (text: string) => void;
@@ -74,13 +75,34 @@ export const useSessionStore = create<SessionState & SessionActions>()((set) => 
     return newId;
   },
 
-  setActiveSession: (sessionId, notes, transcript, transcriptSegments = []) =>
-    set({
-      activeSessionId: sessionId,
-      activeNotes: notes,
-      activeTranscript: transcript,
-      activeTranscriptSegments: transcriptSegments,
-      elapsedSeconds: 0,
+  setActiveSession: (sessionId, notes, transcript, transcriptSegments = [], meta) =>
+    set((state) => {
+      const existing = state.sessions.find((s) => s.id === sessionId);
+      const now = new Date().toISOString();
+      const updatedListItem: SessionListItem = {
+        id: sessionId,
+        userUuid: meta?.userUuid ?? existing?.userUuid ?? '',
+        title: meta?.title ?? existing?.title ?? '',
+        noteCount: notes.length,
+        durationSeconds: meta?.durationSeconds ?? existing?.durationSeconds ?? 0,
+        status: meta?.status ?? existing?.status ?? 'idle',
+        hasAiSummary: meta?.hasAiSummary ?? existing?.hasAiSummary ?? false,
+        createdAt: meta?.createdAt ?? existing?.createdAt ?? now,
+        updatedAt: meta?.updatedAt ?? now,
+      };
+
+      const sessions = existing
+        ? state.sessions.map((s) => (s.id === sessionId ? { ...s, ...updatedListItem } : s))
+        : [updatedListItem, ...state.sessions];
+
+      return {
+        activeSessionId: sessionId,
+        activeNotes: notes,
+        activeTranscript: transcript,
+        activeTranscriptSegments: transcriptSegments,
+        elapsedSeconds: 0,
+        sessions,
+      };
     }),
 
   appendNote: (note) =>

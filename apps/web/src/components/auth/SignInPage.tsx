@@ -307,9 +307,16 @@ export function SignInPage() {
       </div>
 
       {/* Tagline below card */}
-      <p className="mt-6 text-xs text-[var(--nl-color-ink-disabled)] text-center max-w-xs leading-relaxed">
-        Ambient AI notetaker — listens through your mic, never joins as a participant.
-      </p>
+      <div className="mt-6 text-center max-w-sm space-y-3">
+        <p className="text-xs text-[var(--nl-color-ink-disabled)] leading-relaxed">
+          Ambient AI notetaker — listens through your mic, never joins as a participant.
+        </p>
+        <ul className="text-[10px] font-mono text-[var(--nl-color-ink-disabled)] space-y-1.5 text-left inline-block">
+          <li>· Works beside Zoom, Teams, Meet, or in person</li>
+          <li>· Live transcription with visible “active” indicator</li>
+          <li>· Recap, key takeaways, and post-meeting workflows</li>
+        </ul>
+      </div>
     </div>
   );
 }

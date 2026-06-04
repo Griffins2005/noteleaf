@@ -83,7 +83,17 @@ async function request<T>(
     // Throw so callers / React Query see the 401.
   }
 
-  const json = (await response.json()) as ApiResponse<T>;
+  const raw = await response.text();
+  let json: ApiResponse<T>;
+
+  try {
+    json = JSON.parse(raw) as ApiResponse<T>;
+  } catch {
+    throw new HttpError(response.status, {
+      code: 'INVALID_RESPONSE',
+      message: raw.trim().slice(0, 120) || `Request failed with status ${response.status}`,
+    });
+  }
 
   if (!response.ok || !json.success) {
     throw new HttpError(

@@ -8,6 +8,8 @@ export type AiSummaryCardState = 'idle' | 'loading' | 'success' | 'error';
 export interface AiSummaryCardProps {
   state: AiSummaryCardState;
   summary?: AiSummary;
+  /** Instant draft is visible; AI recap still running in background. */
+  isEnhancing?: boolean;
   onRetry: () => void;
   className?: string;
 }
@@ -42,7 +44,7 @@ function ActionItem({ text }: { text: string }) {
   );
 }
 
-export function AiSummaryCard({ state, summary, onRetry, className }: AiSummaryCardProps) {
+export function AiSummaryCard({ state, summary, isEnhancing = false, onRetry, className }: AiSummaryCardProps) {
   return (
     <div
       className={cn(
@@ -67,7 +69,9 @@ export function AiSummaryCard({ state, summary, onRetry, className }: AiSummaryC
         </span>
         {state === 'success' && summary && (
           <time className="ml-auto text-[10px] font-mono text-[var(--nl-color-ink-disabled)]">
-            {new Date(summary.generatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+            {isEnhancing
+              ? 'Enhancing…'
+              : new Date(summary.generatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
           </time>
         )}
       </div>
@@ -109,9 +113,15 @@ export function AiSummaryCard({ state, summary, onRetry, className }: AiSummaryC
         </div>
       )}
 
-      {/* Success */}
+      {/* Success (includes instant draft while AI enhances) */}
       {state === 'success' && summary && (
         <div className="px-5 py-5 space-y-5">
+          {isEnhancing && (
+            <p className="text-[11px] font-mono text-[var(--nl-color-accent-primary)] flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--nl-color-accent-primary)] animate-pulse shrink-0" aria-hidden="true" />
+              Enhancing recap with AI…
+            </p>
+          )}
           {/* Overview */}
           <p className="text-[15px] font-sans leading-[1.7] text-[var(--nl-color-ink-primary)]">
             {summary.overview}
@@ -141,7 +151,7 @@ export function AiSummaryCard({ state, summary, onRetry, className }: AiSummaryC
           {summary.insights.length > 0 && (
             <>
               <div className="border-t border-[var(--nl-border-default)] opacity-50" />
-              <Section icon="◆" title="Insights">
+              <Section icon="◆" title="Key takeaways">
                 {summary.insights.map((ins, i) => <Bullet key={i} text={ins} />)}
               </Section>
             </>
@@ -149,9 +159,11 @@ export function AiSummaryCard({ state, summary, onRetry, className }: AiSummaryC
 
           {/* Footer */}
           <div className="border-t border-[var(--nl-border-default)] opacity-50" />
-          <p className="text-[9px] font-mono text-[var(--nl-color-ink-disabled)] uppercase tracking-widest">
-            {summary.modelUsed}
-          </p>
+          {!isEnhancing && summary.modelUsed !== 'instant' && (
+            <p className="text-[9px] font-mono text-[var(--nl-color-ink-disabled)] uppercase tracking-widest">
+              {summary.modelUsed}
+            </p>
+          )}
         </div>
       )}
 

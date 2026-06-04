@@ -46,12 +46,6 @@ export default function TermsPage() {
 
         <div>
           <h1 className="text-[22px] font-bold text-[#0f172a] mb-2">Terms &amp; Privacy</h1>
-          <p className="text-[13px] text-[#64748b] leading-relaxed">
-            Questions? Email{' '}
-            <a href="mailto:hello@noteleaf.app" className="text-[#2563eb] hover:underline">
-              hello@noteleaf.app
-            </a>.
-          </p>
         </div>
 
         <Section title="Terms of Service">

@@ -24,20 +24,27 @@ import { logger } from '../logger.js';
 
 const MODEL = 'nvidia/nemotron-3-super-120b-a12b';
 const NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1';
-const MAX_TOKENS = 1024;
+const SUMMARIZE_MAX_TOKENS = 384;
 
 // ─── Prompt ───────────────────────────────────────────────────────────────────
 
 function buildPrompt(request: SummarizeRequest): { system: string; user: string } {
+  const richNotes = request.notes.length >= 3;
+  const transcriptExcerpt = richNotes ? '' : (request.transcriptExcerpt ?? '').slice(0, 800);
+  const transcriptSegments = richNotes
+    ? undefined
+    : request.transcriptSegments?.slice(0, 12);
+
   const sessionLabel = request.sessionTitle
-    ? `a meeting titled "${request.sessionTitle}"`
-    : 'an untitled meeting';
+    ? `"${request.sessionTitle}"`
+    : 'this session';
 
   const notesText = request.notes
+    .slice(0, 24)
     .map((n) => `[${n.type.toUpperCase()}] ${n.content}`)
     .join('\n');
 
-  const transcriptLines = request.transcriptSegments
+  const transcriptLines = transcriptSegments
     ?.map((segment) => {
       const start = Math.floor(segment.startOffsetSeconds);
       const end = Math.floor(segment.endOffsetSeconds);
@@ -45,34 +52,29 @@ function buildPrompt(request: SummarizeRequest): { system: string; user: string 
     })
     .join('\n');
 
-  const transcriptSection = request.transcriptExcerpt
-    ? `\nVERBATIM TRANSCRIPT EXCERPT:\n${transcriptLines || request.transcriptExcerpt}`
+  const transcriptSection = transcriptExcerpt.trim()
+    ? `\nTRANSCRIPT:\n${transcriptLines || transcriptExcerpt}`
     : '';
 
   const system =
-    'You are a meeting notes writer. Read raw auto-captured speech notes and ' +
-    'return a structured JSON summary. Respond ONLY with valid JSON — ' +
-    'no markdown fences, no explanation, no preamble.';
+    'You output ONLY a single JSON object. No markdown fences. No explanation. No prose before or after.\n' +
+    'The first character of your reply MUST be { and the last MUST be }.';
 
   const user = `Summarise ${sessionLabel}.
 
-RAW NOTES:
+NOTES:
 ${notesText}
 ${transcriptSection}
 
-Return exactly this JSON schema:
-{
-  "overview": "1-2 sentences: meeting purpose and outcome",
-  "decisions": ["each decision reached — empty array if none"],
-  "actionItems": ["verb + task + owner if mentioned — empty array if none"],
-  "insights": ["notable ideas or discussion themes — empty array if none"]
-}
+Return exactly this JSON shape (fill in values):
+{"overview":"1-2 sentences","decisions":[],"actionItems":[],"insights":[]}
 
 Rules:
-- Return empty arrays [] for sections with nothing relevant.
-- Do not invent information. Only use what is in the notes or transcript.
-- Each item is one concise sentence.
-- Action items must start with a verb (Schedule, Send, Review, etc).`;
+- overview: what happened — not verbatim speech
+- decisions: short "Decided: …" lines
+- actionItems: verb-first real tasks only — empty array if none
+- insights: one crisp observation each — empty array if none
+- no invented facts, owners, or deadlines`;
 
   return { system, user };
 }
@@ -86,29 +88,100 @@ interface SummaryJsonShape {
   insights:    string[];
 }
 
-function parseResponse(rawText: string): SummaryJsonShape {
-  const cleaned = rawText
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/\s*```$/, '')
-    .trim();
+function isSummaryJsonShape(value: unknown): value is SummaryJsonShape {
+  if (typeof value !== 'object' || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  return (
+    typeof obj['overview'] === 'string' &&
+    Array.isArray(obj['decisions']) &&
+    Array.isArray(obj['actionItems']) &&
+    Array.isArray(obj['insights'])
+  );
+}
 
-  const parsed = JSON.parse(cleaned) as unknown;
+function normalizeSummaryShape(raw: SummaryJsonShape): SummaryJsonShape {
+  return {
+    overview: raw.overview.trim(),
+    decisions: raw.decisions.map((s) => String(s).trim()).filter(Boolean),
+    actionItems: raw.actionItems.map((s) => String(s).trim()).filter(Boolean),
+    insights: raw.insights.map((s) => String(s).trim()).filter(Boolean),
+  };
+}
 
-  if (
-    typeof parsed !== 'object' ||
-    parsed === null ||
-    typeof (parsed as Record<string, unknown>)['overview']    !== 'string' ||
-    !Array.isArray((parsed as Record<string, unknown>)['decisions'])   ||
-    !Array.isArray((parsed as Record<string, unknown>)['actionItems']) ||
-    !Array.isArray((parsed as Record<string, unknown>)['insights'])
-  ) {
-    throw new Error(
-      `NVIDIA NIM response did not match expected schema. Raw: ${rawText.slice(0, 200)}`,
-    );
+/** Extract JSON from model output — handles fences, preamble, and chain-of-thought. */
+function tryParseSummaryJson(rawText: string): SummaryJsonShape | null {
+  const candidates: string[] = [];
+
+  const trimmed = rawText.trim();
+  candidates.push(trimmed);
+
+  candidates.push(
+    trimmed
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/, '')
+      .trim(),
+  );
+
+  const first = trimmed.indexOf('{');
+  const last = trimmed.lastIndexOf('}');
+  if (first !== -1 && last > first) {
+    candidates.push(trimmed.slice(first, last + 1));
   }
 
-  return parsed as SummaryJsonShape;
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (isSummaryJsonShape(parsed)) {
+        return normalizeSummaryShape(parsed);
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+
+  return null;
+}
+
+/** Deterministic recap from classified notes when the LLM returns prose. */
+function buildFallbackSummary(request: SummarizeRequest): SummaryJsonShape {
+  const contentNotes = request.notes.filter((n) => n.content.trim() && n.type !== 'summary');
+  const decisions = contentNotes.filter((n) => n.type === 'decision').map((n) => n.content.trim());
+  const actionItems = contentNotes.filter((n) => n.type === 'action').map((n) => n.content.trim());
+  const insights = contentNotes.filter((n) => n.type === 'insight').map((n) => n.content.trim());
+
+  let overview: string;
+  if (decisions[0]) {
+    overview = decisions[0]!;
+  } else if (insights[0]) {
+    overview = insights[0]!;
+  } else if (actionItems[0]) {
+    overview = `Session with ${actionItems.length} follow-up${actionItems.length === 1 ? '' : 's'}.`;
+  } else if (contentNotes[0]) {
+    overview = contentNotes[0]!.content.trim();
+  } else {
+    overview = 'Session recap from captured notes.';
+  }
+
+  return normalizeSummaryShape({
+    overview,
+    decisions,
+    actionItems,
+    insights,
+  });
+}
+
+function parseResponse(rawText: string, request: SummarizeRequest): { shape: SummaryJsonShape; fromFallback: boolean } {
+  const parsed = tryParseSummaryJson(rawText);
+  if (parsed) return { shape: parsed, fromFallback: false };
+
+  logger.warn(
+    { sessionId: request.sessionId, raw: rawText.slice(0, 200) },
+    'NVIDIA NIM returned non-JSON summary; using note-based fallback',
+  );
+
+  return { shape: buildFallbackSummary(request), fromFallback: true };
 }
 
 // ─── Service ──────────────────────────────────────────────────────────────────
@@ -139,23 +212,49 @@ export class NvidiaLlmService {
 
     const { system, user } = buildPrompt(request);
 
-    const completion = await this.client.chat.completions.create({
-      model: MODEL,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user',   content: user   },
-      ],
-      max_tokens:  MAX_TOKENS,
-      temperature: 0,
-    });
+    let completion;
+    try {
+      completion = await this.client.chat.completions.create({
+        model: MODEL,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user',   content: user   },
+        ],
+        max_tokens: SUMMARIZE_MAX_TOKENS,
+        temperature: 0,
+        response_format: { type: 'json_object' },
+      });
+    } catch (err) {
+      logger.warn({ err, sessionId: request.sessionId }, 'JSON mode unavailable; retrying without response_format');
+      completion = await this.client.chat.completions.create({
+        model: MODEL,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user',   content: user   },
+        ],
+        max_tokens: SUMMARIZE_MAX_TOKENS,
+        temperature: 0,
+      });
+    }
 
     const rawText = completion.choices[0]?.message?.content ?? '';
 
     if (!rawText) {
-      throw new Error('NVIDIA NIM returned an empty response');
+      logger.warn({ sessionId: request.sessionId }, 'NVIDIA NIM returned empty summary; using note-based fallback');
+      const parsed = buildFallbackSummary(request);
+      return {
+        id:          uuidv4(),
+        sessionId:   request.sessionId,
+        overview:    parsed.overview,
+        decisions:   parsed.decisions,
+        actionItems: parsed.actionItems,
+        insights:    parsed.insights,
+        modelUsed:   'fallback',
+        generatedAt: new Date().toISOString(),
+      };
     }
 
-    const parsed = parseResponse(rawText);
+    const { shape: parsed, fromFallback } = parseResponse(rawText, request);
 
     const summary: AiSummary = {
       id:          uuidv4(),
@@ -164,7 +263,7 @@ export class NvidiaLlmService {
       decisions:   parsed.decisions,
       actionItems: parsed.actionItems,
       insights:    parsed.insights,
-      modelUsed:   MODEL,
+      modelUsed:   fromFallback ? 'fallback' : MODEL,
       generatedAt: new Date().toISOString(),
     };
 
@@ -217,6 +316,11 @@ export class NvidiaLlmService {
 
     const system =
       'You are a meeting notes assistant. Answer using ONLY the numbered sources provided.\n\n' +
+      'Important context:\n' +
+      '- Sources may be rhetorical speech, monologue, jokes, or storytelling — not literal meeting tasks.\n' +
+      '- Notes tagged ACTION are auto-classified from speech and may be figurative advice, not real assignments.\n' +
+      '- Do NOT invent owners, responsibilities, or deadlines unless explicitly stated in the sources.\n' +
+      '- For "who is responsible" questions about rhetorical advice, say the speaker is addressing the audience; do not name a person unless named in sources.\n\n' +
       'Respond with ONLY this JSON object — no other text:\n' +
       '{"answer":"1-3 sentence answer.","used":[1,3]}\n\n' +
       'If the answer is not in the sources: {"answer":"Not mentioned in this session.","used":[]}\n\n' +

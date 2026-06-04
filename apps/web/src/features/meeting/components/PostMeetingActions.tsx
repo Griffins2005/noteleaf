@@ -8,6 +8,7 @@ interface PostMeetingActionsProps extends ExportInput {
   compact?: boolean;
   onDismiss?: () => void;
   onAskNotes?: () => void;
+  onOpenRecap?: () => void;
   className?: string;
 }
 
@@ -15,6 +16,7 @@ export function PostMeetingActions({
   compact = false,
   onDismiss,
   onAskNotes,
+  onOpenRecap,
   className,
   ...exportInput
 }: PostMeetingActionsProps) {
@@ -42,6 +44,13 @@ export function PostMeetingActions({
     setTimeout(() => setFeedback(null), 2200);
   }
 
+  async function handleCopyTakeaways() {
+    const text = exportFormatter.toKeyTakeawaysPlainText(exportPayload);
+    const ok = await exportFormatter.copyToClipboard(text);
+    setFeedback(ok ? 'Takeaways copied' : 'Copy failed');
+    setTimeout(() => setFeedback(null), 2200);
+  }
+
   function handleEmailRecap() {
     window.location.href = exportFormatter.toMailtoUrl(exportPayload);
   }
@@ -57,8 +66,14 @@ export function PostMeetingActions({
     {
       id: 'copy-recap',
       label: 'Copy recap',
-      sub: 'Summary + action items',
+      sub: 'Summary + takeaways + tasks',
       onClick: () => void handleCopyRecap(),
+    },
+    {
+      id: 'takeaways',
+      label: 'Copy takeaways',
+      sub: 'Key points for Slack or docs',
+      onClick: () => void handleCopyTakeaways(),
     },
     {
       id: 'email',
@@ -68,7 +83,7 @@ export function PostMeetingActions({
     },
     {
       id: 'actions',
-      label: 'Copy tasks',
+      label: 'Copy next steps',
       sub: 'Checklist for your tools',
       onClick: () => void handleCopyActions(),
     },
@@ -91,10 +106,10 @@ export function PostMeetingActions({
       <div className={cn('flex items-start gap-3', compact ? 'px-4 py-3' : 'px-5 py-4')}>
         <div className="flex-1 min-w-0">
           <p className="text-[12px] font-sans font-medium text-[var(--nl-color-ink-primary)]">
-            Turn this meeting into action
+            Post-meeting workflows
           </p>
           <p className="text-[10px] font-mono text-[var(--nl-color-ink-tertiary)] mt-0.5 leading-relaxed">
-            Share recap, copy next steps, or keep digging with Ask notes — no bot required.
+            Send recap emails, copy next steps, or ask follow-ups — no bot required.
           </p>
         </div>
         {onDismiss && (
@@ -111,7 +126,7 @@ export function PostMeetingActions({
 
       <div className={cn(
         'grid gap-2 border-t border-[var(--nl-color-accent-border)]',
-        compact ? 'px-4 py-3 grid-cols-2 sm:grid-cols-4' : 'px-5 py-4 grid-cols-2 lg:grid-cols-4',
+        compact ? 'px-4 py-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5' : 'px-5 py-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5',
       )}>
         {actions.map((action) => (
           <button
@@ -138,6 +153,15 @@ export function PostMeetingActions({
         'flex flex-wrap items-center gap-3 border-t border-[var(--nl-color-accent-border)]',
         compact ? 'px-4 py-2.5' : 'px-5 py-3',
       )}>
+        {onOpenRecap && (
+          <button
+            type="button"
+            onClick={onOpenRecap}
+            className="text-[11px] font-mono font-medium text-[var(--nl-color-ink-secondary)] hover:text-[var(--nl-color-ink-primary)]"
+          >
+            Open recap →
+          </button>
+        )}
         {onAskNotes && (
           <button
             type="button"

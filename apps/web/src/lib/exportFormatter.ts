@@ -397,6 +397,24 @@ function toActionItemsChecklist(input: ExportInput): string {
   return items.map((item) => `- [ ] ${item}`).join('\n');
 }
 
+/** Key takeaways only — for quick paste into Slack, docs, or chat. */
+function toKeyTakeawaysPlainText(input: ExportInput): string {
+  const { title, notes, aiSummary } = input;
+  const displayTitle = title || 'Untitled Session';
+  const takeaways = aiSummary?.insights.length
+    ? aiSummary.insights
+    : notes.filter((n) => n.type === 'insight').map((n) => n.content);
+
+  if (takeaways.length === 0) {
+    return `No key takeaways captured in "${displayTitle}".`;
+  }
+
+  const lines = [`Key takeaways — ${displayTitle}`, ''];
+  takeaways.forEach((item) => lines.push(`• ${item}`));
+  lines.push('', '—', 'Captured with Noteleaf');
+  return lines.join('\n');
+}
+
 function toMailtoUrl(input: ExportInput, recipient = ''): string {
   const displayTitle = input.title || 'Untitled Session';
   const subject = encodeURIComponent(`Meeting recap: ${displayTitle}`);
@@ -461,6 +479,7 @@ export const exportFormatter = {
   toMarkdown,
   toRecapPlainText,
   toActionItemsChecklist,
+  toKeyTakeawaysPlainText,
   toMailtoUrl,
   copyToClipboard,
   triggerDownload,

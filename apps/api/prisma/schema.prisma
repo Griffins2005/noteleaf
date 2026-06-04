@@ -44,6 +44,7 @@ model Session {
   notes              Json          @default("[]")
   transcript         String        @default("")
   transcriptSegments Json          @default("[]")
+  chatMessages       Json          @default("[]")         @map("chat_messages")
   durationSeconds    Int           @default(0)            @map("duration_seconds")
   status             SessionStatus @default(IDLE)
 

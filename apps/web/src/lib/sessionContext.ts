@@ -25,6 +25,22 @@ export function segmentsForSummarize(segments: TranscriptSegment[]) {
     }));
 }
 
+/** Smaller payload when notes already capture the session — faster LLM recap. */
+export function buildSummarizePayload(
+  notes: Note[],
+  transcript: string,
+  transcriptSegments: TranscriptSegment[],
+) {
+  const apiNotes = notesForSummarize(notes);
+  const richNotes = apiNotes.length >= 3;
+
+  return {
+    notes: apiNotes,
+    transcriptExcerpt: richNotes ? '' : transcript.trim().slice(0, 800),
+    transcriptSegments: richNotes ? [] : segmentsForSummarize(transcriptSegments).slice(0, 12),
+  };
+}
+
 export function notesForChat(notes: Note[]) {
   return notes
     .filter((n) => n.id && n.capturedAt && n.content.trim().length > 0)

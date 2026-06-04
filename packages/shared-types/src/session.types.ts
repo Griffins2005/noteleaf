@@ -1,4 +1,5 @@
 import type { Note } from './note.types.js';
+import type { ChatMessage } from './chat.types.js';
 
 // A Session is one continuous recording.
 // Lifecycle: idle → recording → stopped → summarised
@@ -33,6 +34,7 @@ export interface Session {
   notes:              Note[];
   transcript:         string;
   transcriptSegments: TranscriptSegment[];
+  chatMessages:       ChatMessage[];
   durationSeconds:    number;
   aiSummary?:         AiSummary;
   status:             SessionStatus;
@@ -64,6 +66,7 @@ export interface UpdateSessionPayload {
   notes?:              Note[];
   transcript?:         string;
   transcriptSegments?: TranscriptSegment[];
+  chatMessages?:       ChatMessage[];
   durationSeconds?:    number;
   status?:             SessionStatus;
   aiSummary?:          AiSummary;

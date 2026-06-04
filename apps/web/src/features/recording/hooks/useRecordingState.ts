@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useSpeechRecognition } from './useSpeechRecognition';
+import { resolveSpeechLanguage } from '@/lib/speechLanguages';
 import { useNoteClassifier } from '@/features/notes/useNoteClassifier';
 import { useSessionStore } from '@/store/session.store';
 import { useUserStore } from '@/store/user.store';
@@ -18,6 +19,8 @@ export interface UseRecordingStateReturn {
   elapsedSeconds:  number;
   /** 'permission-denied' | 'not-supported' | null */
   error: string | null;
+  /** Brief warning when STT reconnects after a network hiccup. */
+  sttWarning: string | null;
   startRecording: () => Promise<void>;
   stopRecording:  () => Promise<void>;
 }
@@ -28,6 +31,7 @@ export function useRecordingState(): UseRecordingStateReturn {
   const [recordingStatus, setRecordingStatus] = useState<RecordingStatus>('idle');
   const [liveTranscript, setLiveTranscript]   = useState('');
   const [error, setError]                     = useState<string | null>(null);
+  const [sttWarning, setSttWarning]           = useState<string | null>(null);
 
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -90,9 +94,16 @@ export function useRecordingState(): UseRecordingStateReturn {
 
     onError: (code, message) => {
       console.error(`[STT] ${code}: ${message}`);
+      setSttWarning(null);
       setError(code === 'permission-denied' ? 'permission-denied' : 'unknown');
       setRecordingStatus('error');
       stopTimer();
+    },
+
+    onRecoverableError: (code) => {
+      console.warn(`[STT] Recoverable error (${code}) — restarting transcription`);
+      setSttWarning('Transcription reconnecting… keep speaking.');
+      setTimeout(() => setSttWarning(null), 5000);
     },
   });
 
@@ -128,6 +139,7 @@ export function useRecordingState(): UseRecordingStateReturn {
     }
 
     setError(null);
+    setSttWarning(null);
     setRecordingStatus('connecting');
 
     let sessionId = activeSessionId;
@@ -142,7 +154,7 @@ export function useRecordingState(): UseRecordingStateReturn {
       }
     }
 
-    startSTT(preferences.speechLanguage);
+    startSTT(resolveSpeechLanguage());
     setRecordingStatus('recording');
     startTimer();
   }, [
@@ -152,7 +164,6 @@ export function useRecordingState(): UseRecordingStateReturn {
     recordingStatus,
     startSTT,
     userId,
-    preferences.speechLanguage,
   ]);
 
   // ── Stop recording ─────────────────────────────────────────────────────
@@ -193,5 +204,5 @@ export function useRecordingState(): UseRecordingStateReturn {
     setRecordingStatus('idle');
   }, [recordingStatus, stopSTT]);
 
-  return { recordingStatus, liveTranscript, elapsedSeconds, error, startRecording, stopRecording };
+  return { recordingStatus, liveTranscript, elapsedSeconds, error, sttWarning, startRecording, stopRecording };
 }

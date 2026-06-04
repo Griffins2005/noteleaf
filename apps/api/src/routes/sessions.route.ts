@@ -21,6 +21,7 @@ import type {
   DeleteSessionResponse,
   SessionListItem,
   Session,
+  ChatMessage,
 } from '@noteleaf/shared-types';
 import { logger } from '../logger.js';
 
@@ -38,9 +39,21 @@ const updateSessionSchema = z.object({
   notes: z.array(z.unknown()).optional(),
   transcript: z.string().optional(),
   transcriptSegments: z.array(z.unknown()).optional(),
+  chatMessages: z.array(z.object({
+    id: z.string().uuid(),
+    role: z.enum(['user', 'assistant']),
+    content: z.string().max(4000),
+    citations: z.array(z.unknown()).optional(),
+    timestamp: z.string(),
+  })).max(200).optional(),
   durationSeconds: z.number().int().nonnegative().optional(),
   status: z.enum(['idle', 'recording', 'stopped', 'summarised']).optional(),
 });
+
+function parseChatMessages(raw: unknown): ChatMessage[] {
+  if (!Array.isArray(raw)) return [];
+  return raw as ChatMessage[];
+}
 
 // Helpers
 
@@ -168,6 +181,7 @@ export async function sessionsRoute(fastify: FastifyInstance): Promise<void> {
         transcriptSegments: Array.isArray(record.transcriptSegments)
           ? (record.transcriptSegments as unknown as Session['transcriptSegments'])
           : [],
+        chatMessages: parseChatMessages(record.chatMessages),
         durationSeconds: record.durationSeconds,
         status: record.status.toLowerCase() as Session['status'],
         createdAt: record.createdAt.toISOString(),
@@ -236,6 +250,7 @@ export async function sessionsRoute(fastify: FastifyInstance): Promise<void> {
         notes: [],
         transcript: '',
         transcriptSegments: [],
+        chatMessages: [],
         durationSeconds: 0,
         status: 'idle',
         createdAt: record.createdAt.toISOString(),
@@ -279,13 +294,16 @@ export async function sessionsRoute(fastify: FastifyInstance): Promise<void> {
         }) as unknown as UpdateSessionResponse;
       }
 
-      const { title, notes, transcript, transcriptSegments, durationSeconds, status } = parsed.data;
+      const { title, notes, transcript, transcriptSegments, chatMessages, durationSeconds, status } = parsed.data;
       const data: Prisma.SessionUpdateInput = {};
       if (title !== undefined) data.title = title;
       if (notes !== undefined) data.notes = notes as Prisma.InputJsonValue;
       if (transcript !== undefined) data.transcript = transcript;
       if (transcriptSegments !== undefined) {
         data.transcriptSegments = transcriptSegments as Prisma.InputJsonValue;
+      }
+      if (chatMessages !== undefined) {
+        data.chatMessages = chatMessages as Prisma.InputJsonValue;
       }
       if (durationSeconds !== undefined) data.durationSeconds = durationSeconds;
       if (status !== undefined) data.status = status.toUpperCase() as PrismaSessionStatus;
@@ -307,6 +325,7 @@ export async function sessionsRoute(fastify: FastifyInstance): Promise<void> {
         transcriptSegments: Array.isArray(updated.transcriptSegments)
           ? (updated.transcriptSegments as unknown as Session['transcriptSegments'])
           : [],
+        chatMessages: parseChatMessages(updated.chatMessages),
         durationSeconds: updated.durationSeconds,
         status: updated.status.toLowerCase() as Session['status'],
         createdAt: updated.createdAt.toISOString(),

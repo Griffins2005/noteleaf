@@ -1,35 +1,37 @@
 /**
  * @file tokens.css
- * @description Design tokens — clean professional theme.
- *
- * Palette: white surfaces, slate neutrals, blue accent.
- * No warm tones. No heavy shadows. Flat, minimal, readable.
+ * @description Design tokens — minimal palette: navy, milkwhite, black.
  */
 
 :root {
+  /* ── Core palette ─────────────────────────────────────────────────────── */
+  --nl-color-navy:  #1e3a5f;
+  --nl-color-milk:  #faf8f4;
+  --nl-color-black: #0a0a0a;
+
   /* ── Ink (text) ──────────────────────────────────────────────────────── */
-  --nl-color-ink-primary:   #0f172a;   /* slate-900 */
-  --nl-color-ink-secondary: #334155;   /* slate-700 */
-  --nl-color-ink-tertiary:  #64748b;   /* slate-500 */
-  --nl-color-ink-disabled:  #94a3b8;   /* slate-400 */
+  --nl-color-ink-primary:   var(--nl-color-black);
+  --nl-color-ink-secondary: #1a1a1a;
+  --nl-color-ink-tertiary:  #404040;
+  --nl-color-ink-disabled:  #737373;
 
   /* ── Paper (surfaces) ────────────────────────────────────────────────── */
-  --nl-color-paper-base:    #ffffff;
-  --nl-color-paper-raised:  #f8fafc;   /* slate-50 */
-  --nl-color-paper-sunken:  #f1f5f9;   /* slate-100 */
-  --nl-color-paper-bg:      #e2e8f0;   /* slate-200 — page background */
+  --nl-color-paper-base:    var(--nl-color-milk);
+  --nl-color-paper-raised:  #fffefb;
+  --nl-color-paper-sunken:  #f3f1ec;
+  --nl-color-paper-bg:      var(--nl-color-milk);
 
-  /* ── Accent (professional blue) ──────────────────────────────────────── */
-  --nl-color-accent-primary: #2563eb;  /* blue-600 */
-  --nl-color-accent-hover:   #1d4ed8;  /* blue-700 */
-  --nl-color-accent-subtle:  #eff6ff;  /* blue-50 */
-  --nl-color-accent-border:  #bfdbfe;  /* blue-200 */
+  /* ── Accent (navy) ───────────────────────────────────────────────────── */
+  --nl-color-accent-primary: var(--nl-color-navy);
+  --nl-color-accent-hover:   #152a45;
+  --nl-color-accent-subtle:  #eef1f5;
+  --nl-color-accent-border:  rgba(30, 58, 95, 0.22);
 
-  /* ── Info / cloud (same blue family) ────────────────────────────────── */
-  --nl-color-blue-primary: #2563eb;
-  --nl-color-blue-hover:   #1d4ed8;
-  --nl-color-blue-subtle:  #eff6ff;
-  --nl-color-blue-border:  #bfdbfe;
+  /* ── Info / cloud ────────────────────────────────────────────────────── */
+  --nl-color-blue-primary: var(--nl-color-navy);
+  --nl-color-blue-hover:   #152a45;
+  --nl-color-blue-subtle:  #eef1f5;
+  --nl-color-blue-border:  rgba(30, 58, 95, 0.22);
 
   /* ── Semantic ────────────────────────────────────────────────────────── */
   --nl-color-danger:        #dc2626;   /* red-600 */
@@ -70,9 +72,9 @@
   --nl-color-badge-summary-text:  var(--nl-color-ink-tertiary);
 
   /* ── Borders ─────────────────────────────────────────────────────────── */
-  --nl-border-subtle:  #e2e8f0;   /* slate-200 */
-  --nl-border-default: #cbd5e1;   /* slate-300 */
-  --nl-border-strong:  #94a3b8;   /* slate-400 */
+  --nl-border-subtle:  rgba(0, 0, 0, 0.06);
+  --nl-border-default: rgba(0, 0, 0, 0.10);
+  --nl-border-strong:  rgba(0, 0, 0, 0.18);
 
   /* ── Spacing (4px grid) ──────────────────────────────────────────────── */
   --nl-space-1:   4px;
@@ -115,10 +117,10 @@
   --nl-transition-normal: 150ms ease;
   --nl-transition-slow:   250ms ease;
 
-  /* ── Shadows — minimal / flat ────────────────────────────────────────── */
-  --nl-shadow-sm:  0 1px 2px rgba(15,23,42,0.05);
-  --nl-shadow-md:  0 1px 4px rgba(15,23,42,0.06), 0 0 0 1px rgba(15,23,42,0.03);
-  --nl-shadow-lg:  0 4px 12px rgba(15,23,42,0.07), 0 0 0 1px rgba(15,23,42,0.04);
+  /* ── Shadows — minimal ───────────────────────────────────────────────── */
+  --nl-shadow-sm:  0 1px 2px rgba(0, 0, 0, 0.04);
+  --nl-shadow-md:  0 1px 3px rgba(0, 0, 0, 0.05);
+  --nl-shadow-lg:  0 2px 8px rgba(0, 0, 0, 0.06);
 
   /* ── Z-index ─────────────────────────────────────────────────────────── */
   --nl-z-base:    0;
@@ -128,12 +130,12 @@
   --nl-z-toast:   300;
 
   /* ── Dark navigation sidebar ─────────────────────────────────────────── */
-  --nl-sidebar-bg:          #0f172a;   /* slate-900 */
-  --nl-sidebar-bg-hover:    rgba(255,255,255,0.05);
-  --nl-sidebar-bg-active:   rgba(59,130,246,0.14);  /* blue tint */
-  --nl-sidebar-border:      rgba(255,255,255,0.07);
-  --nl-sidebar-text:        #cbd5e1;   /* slate-300 */
-  --nl-sidebar-text-muted:  #475569;   /* slate-600 */
-  --nl-sidebar-text-active: #93c5fd;   /* blue-300 */
-  --nl-sidebar-accent:      #2563eb;   /* blue-600 */
+  --nl-sidebar-bg:          var(--nl-color-navy);
+  --nl-sidebar-bg-hover:    rgba(255, 255, 255, 0.06);
+  --nl-sidebar-bg-active:   rgba(255, 255, 255, 0.10);
+  --nl-sidebar-border:      rgba(255, 255, 255, 0.08);
+  --nl-sidebar-text:        rgba(255, 255, 255, 0.92);
+  --nl-sidebar-text-muted:  rgba(255, 255, 255, 0.55);
+  --nl-sidebar-text-active: #ffffff;
+  --nl-sidebar-accent:      #ffffff;
 }
