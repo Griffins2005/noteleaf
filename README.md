@@ -180,10 +180,7 @@ Without a Google client, the "Continue with Google" button is disabled.
 # 1. Clone the repository
 git clone <repo-url> noteleaf && cd noteleaf
 
-# 2. Create the environment file
-cp .env.example .env
-
-# 3. Fill in your credentials — at minimum NVIDIA_API_KEY
+# 2. Create root .env (see DEPLOY.local.md — gitignored)
 nano .env
 
 # 4. Start the full stack
@@ -224,12 +221,7 @@ Requires Node.js 20+ and a local PostgreSQL 15+ instance.
 # Install dependencies
 npm install
 
-# Configure the API (Docker: use port 5433 on host — see apps/api/.env.example)
-cp apps/api/.env.example apps/api/.env
-
-# Optional: configure the web app for local Next.js dev
-cp apps/web/.env.example apps/web/.env.local
-# Edit apps/api/.env — set DATABASE_URL, JWT_SECRET, NVIDIA_API_KEY
+# Configure root .env (DATABASE_URL host port 5433, JWT_SECRET, NVIDIA_API_KEY)
 
 # Generate the Prisma client and run migrations
 cd apps/api && npx prisma generate && npx prisma migrate deploy && cd ../..
@@ -268,102 +260,16 @@ Root `.env` (used by Docker Compose):
 
 ## Deployment
 
-### Pre-flight (run before every release)
+Production steps (Vercel frontend + Render backend), env templates, and troubleshooting live in **`DEPLOY.local.md`** at the repo root. That file is **gitignored** — keep a copy on your machine and in your password manager / team vault, not in the repo.
+
+**Local Docker:** root `.env` + optional `.env.production` (see `DEPLOY.local.md`), then:
 
 ```bash
-npm run type-check
-npm run lint
-npm run test
-npm run build
-```
-
-Commit all pending migrations under `apps/api/prisma/migrations/`.
-
-### Docker Compose (recommended)
-
-```bash
-cp .env.example .env
-# Edit .env — see production checklist below
 docker compose up --build -d
-```
-
-Startup order: **postgres** → **migrate** (Prisma) → **api** → **web**.
-
-Verify:
-
-```bash
 curl -s http://localhost:3002/api/health
-open http://localhost:3003
 ```
 
-Sign in, record briefly, stop, check **Recap** and **Ask notes**, then refresh — session title and chat history should persist.
-
-```bash
-docker compose logs -f api web
-docker compose restart api web
-```
-
-### Production environment checklist
-
-Set these in root `.env` before any public deployment:
-
-| Variable | Notes |
-|---|---|
-| `NVIDIA_API_KEY` | Required — [build.nvidia.com](https://build.nvidia.com) |
-| `JWT_SECRET` | Long random string — never use dev defaults |
-| `POSTGRES_PASSWORD` | Strong password |
-| `NEXT_PUBLIC_APP_URL` | Public URL users open in the browser |
-| `NEXT_PUBLIC_API_URL` | Public API URL (browser requests + WebSocket STT if used) |
-| `APP_URL` | Same as `NEXT_PUBLIC_APP_URL` (OAuth redirects) |
-| `API_URL` | Same as `NEXT_PUBLIC_API_URL` |
-| `ALLOWED_ORIGINS` | Comma-separated frontend origin(s), exact match |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | If using Google sign-in |
-| `RESEND_API_KEY` | If using email OTP in production |
-
-**Build-time:** `NEXT_PUBLIC_*` values are embedded in the web image during `docker compose build`. After changing public URLs, rebuild the `web` service.
-
-### Production on a VPS
-
-1. Install Docker and Docker Compose.
-2. Clone the repo; configure `.env` with production domain URLs.
-3. Put a reverse proxy (Caddy, nginx, or a cloud load balancer) in front:
-   - `/` → `web:3000`
-   - `/api/*` → `api:3001`
-   - WebSocket upgrade for `/api/stt/stream` → `api:3001` (only if using server-side STT)
-4. Enable TLS (e.g. Let's Encrypt).
-5. Do not expose Postgres publicly — firewall or remove the host port mapping on `5433` in `docker-compose.yml` if customized.
-
-### Database migrations
-
-Migrations run automatically via the `migrate` service on each `docker compose up`.
-
-Manual run from the host (Docker Postgres exposed on port **5433**):
-
-```bash
-cd apps/api
-DATABASE_URL="postgresql://noteleaf:YOUR_PASSWORD@localhost:5433/noteleaf?schema=public" npx prisma migrate deploy
-```
-
-### Secrets — never commit
-
-These paths are gitignored; configure only on the server or in local copies:
-
-- `.env` (repo root — Docker Compose)
-- `apps/api/.env` (local API dev without Docker)
-- `apps/web/.env.local` (local Next.js dev)
-
-Use `.env.example` and `apps/*/`.env.example` as templates only.
-
-### Troubleshooting
-
-| Symptom | Fix |
-|---|---|
-| `P1001` / can't reach database | Postgres not running, or wrong port (Docker host port is **5433**, not 5432) |
-| `NVIDIA_API_KEY must be set` | Add key to root `.env`, rebuild containers |
-| 502 on recap / Ask notes | `docker compose logs api` — check NVIDIA key and rate limits |
-| Chat history not saved | Run migrations; ensure `chat_messages` migration is applied |
-| OAuth redirect mismatch | `APP_URL` must match Google Cloud authorized redirect URIs |
-| CORS errors | `ALLOWED_ORIGINS` must include your frontend URL exactly |
+Before any release: `npm run verify` and apply migrations under `apps/api/prisma/migrations/`.
 
 ---
 

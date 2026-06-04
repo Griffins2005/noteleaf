@@ -49,10 +49,11 @@ import type { PrismaClient } from '@prisma/client';
 const GOOGLE_CLIENT_ID     = process.env['GOOGLE_CLIENT_ID']     ?? '';
 const GOOGLE_CLIENT_SECRET = process.env['GOOGLE_CLIENT_SECRET'] ?? '';
 const APP_URL              = process.env['APP_URL']              ?? 'http://localhost:3000';
-const API_URL              = process.env['API_URL']              ?? 'http://localhost:3001';
 const IS_PRODUCTION        = process.env['NODE_ENV'] === 'production';
 
-const GOOGLE_REDIRECT_URI = `${API_URL}/api/auth/google/callback`;
+// Public browser origin (Vercel, Docker web, etc.). OAuth callback must match the URL
+// users hit in the browser — including /api when Next.js rewrites proxy to the API host.
+const GOOGLE_REDIRECT_URI = `${APP_URL.replace(/\/$/, '')}/api/auth/google/callback`;
 const GOOGLE_AUTH_URL     = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL    = 'https://oauth2.googleapis.com/token';
 const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo';

@@ -11,18 +11,14 @@ build/
 .turbo/
 *.tsbuildinfo
 
-# Environment — never commit secrets (.env.example files are tracked)
+# Environment — never commit (only root .env + .env.production)
 .env
+.env.production
 .env.local
 .env.*.local
-.env.development
-.env.production
-apps/api/.env
-apps/web/.env.local
 
-# Explicitly track env templates
-!.env.example
-!**/.env.example
+# Local deployment guide (Vercel + Render — not shared via git)
+DEPLOY.local.md
 
 # Logs
 *.log

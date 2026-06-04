@@ -12,7 +12,7 @@
 #   postgres healthy → migrate completes → api healthy → web starts
 #
 # Quick start:
-#   1. cp .env.example .env  (fill in NVIDIA_API_KEY, JWT_SECRET, POSTGRES_PASSWORD)
+#   1. Create root .env from DEPLOY.local.md (Docker Compose template)
 #   2. docker compose up --build
 #
 # Access:
@@ -64,6 +64,7 @@ services:
 
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-noteleaf}:${POSTGRES_PASSWORD:-noteleaf_dev_password}@postgres:5432/${POSTGRES_DB:-noteleaf}
+      DIRECT_DATABASE_URL: postgresql://${POSTGRES_USER:-noteleaf}:${POSTGRES_PASSWORD:-noteleaf_dev_password}@postgres:5432/${POSTGRES_DB:-noteleaf}
 
     volumes:
       - ./apps/api/scripts:/app/apps/api/scripts:ro
@@ -90,6 +91,7 @@ services:
       PORT:     3001
 
       DATABASE_URL: postgresql://${POSTGRES_USER:-noteleaf}:${POSTGRES_PASSWORD:-noteleaf_dev_password}@postgres:5432/${POSTGRES_DB:-noteleaf}
+      DIRECT_DATABASE_URL: postgresql://${POSTGRES_USER:-noteleaf}:${POSTGRES_PASSWORD:-noteleaf_dev_password}@postgres:5432/${POSTGRES_DB:-noteleaf}
 
       NVIDIA_STT_MODE:      ${NVIDIA_STT_MODE:-cloud}
       NVIDIA_API_KEY:       ${NVIDIA_API_KEY:?NVIDIA_API_KEY must be set}

@@ -92,7 +92,7 @@ COPY --from=builder --chown=node:node /app/apps/api/scripts ./apps/api/scripts
 
 WORKDIR /app/apps/api
 
-# Expose the API port. Matches PORT env var default in .env.example.
+# Expose the API port. Matches PORT env var (default 3001).
 EXPOSE 3001
 
 # Health check — used by Docker Compose and container orchestrators to

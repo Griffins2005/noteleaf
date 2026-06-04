@@ -4,12 +4,12 @@
  *
  * Key decisions:
  *   - strictMode: true — catches double-invocation bugs in dev early.
- *   - rewrites: /api/* → Fastify API in both dev and production (Docker).
- *     In a serverless deployment (Vercel), configure rewrites at the platform level
- *     and remove the rewrite here — Next.js rewrites don't apply to WebSockets on Vercel.
+ *   - rewrites: /api/* → Fastify API (dev, Docker, and Vercel). HTTP auth and REST work
+ *     through the proxy so cookies stay on the app origin. WebSockets are not proxied —
+ *     browser STT uses the Web Speech API by default; server STT needs a direct API URL.
  *   - No experimental features — stability over cutting edge for a v1 product.
  *
- * Environment variables (see root `.env.example` and `apps/web/.env.example`):
+ * Environment variables (see DEPLOY.local.md or Vercel / Render dashboards):
  *   NEXT_PUBLIC_API_URL  — Fastify API base URL. Default: http://localhost:3002
  *                          In Docker: http://api:3001 (service name resolves via Docker DNS)
  *   NEXT_PUBLIC_WS_URL   — WebSocket URL override. Leave empty for auto-derivation.
@@ -37,18 +37,9 @@ const config: NextConfig = {
   },
 
   /**
-   * Standalone output mode — required for Docker production builds.
-   *
-   * Next.js traces all imports and produces a self-contained `server.js`
-   * with only the files it needs. This reduces the Docker image from ~1GB
-   * (with full node_modules) to ~150MB (with only required files).
-   *
-   * The standalone output lives at .next/standalone/ after `next build`.
-   * The web Dockerfile copies it to the runner stage.
-   *
-   * Reference: https://nextjs.org/docs/pages/api-reference/next-config-js/output
+   * Standalone output — Docker only. Vercel uses its own output layout.
    */
-  output: 'standalone',
+  ...(process.env['VERCEL'] ? {} : { output: 'standalone' as const }),
 
   /**
    * Proxy /api/* HTTP requests to the Fastify API.

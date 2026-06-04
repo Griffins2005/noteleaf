@@ -34,8 +34,7 @@ services:
       # Mount source files — changes reflect immediately without rebuild.
       - ./apps/api/src:/app/apps/api/src:ro
       - ./packages/shared-types/src:/app/packages/shared-types/src:ro
-      # Mount .env file for local secrets (API keys, etc.)
-      - ./apps/api/.env:/app/apps/api/.env:ro
+      # Next/API env comes from root .env via docker compose env interpolation
 
     # Expose the Prisma Studio port for database inspection in development.
     ports:
@@ -56,8 +55,7 @@ services:
       - ./apps/web/src:/app/apps/web/src:ro
       - ./apps/web/public:/app/apps/web/public:ro
       - ./packages/shared-types/src:/app/packages/shared-types/src:ro
-      # Mount local .env.local for dev overrides.
-      - ./apps/web/.env.local:/app/apps/web/.env.local:ro
+      - ./.env:/app/apps/web/.env.local:ro
 
     ports:
       - "3000:3000"

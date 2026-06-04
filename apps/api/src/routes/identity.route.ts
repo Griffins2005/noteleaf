@@ -16,7 +16,7 @@
  * Resend setup (free, 3 000 emails/month):
  *   1. Sign up at https://resend.com
  *   2. Create an API key
- *   3. Add RESEND_API_KEY=re_... to apps/api/.env
+ *   3. Add RESEND_API_KEY=re_... to root .env (or Render env)
  *   4. Optionally add FROM_EMAIL=you@yourdomain.com (must be a verified sender)
  */
 
