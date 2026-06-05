@@ -19,14 +19,39 @@
 import type { NextConfig } from 'next';
 import path from 'node:path';
 
-// Server-side rewrite target.
-// API_INTERNAL_URL is set by Docker Compose to the Docker-internal service name
-// (http://api:3001) so rewrites work inside the container network.
-// Outside Docker, falls back to NEXT_PUBLIC_API_URL or localhost.
-const API_URL =
-  process.env['API_INTERNAL_URL'] ??
-  process.env['NEXT_PUBLIC_API_URL'] ??
-  'http://localhost:3001';
+// Server-side rewrite target only — never the browser-facing Vercel URL.
+// Falling back to NEXT_PUBLIC_API_URL on Vercel causes INFINITE_LOOP (508) when both
+// are https://noteleaf.vercel.app.
+function resolveApiRewriteTarget(): string {
+  const internal = process.env['API_INTERNAL_URL']?.replace(/\/$/, '');
+  const publicApp =
+    process.env['NEXT_PUBLIC_APP_URL']?.replace(/\/$/, '') ??
+    (process.env['VERCEL_URL'] ? `https://${process.env['VERCEL_URL']}` : undefined);
+
+  if (process.env['VERCEL']) {
+    if (!internal) {
+      throw new Error(
+        'API_INTERNAL_URL must be set on Vercel to your backend host ' +
+          '(e.g. https://noteleaf-api.onrender.com). ' +
+          'Do not use https://noteleaf.vercel.app.',
+      );
+    }
+    if (publicApp && internal === publicApp) {
+      throw new Error(
+        'API_INTERNAL_URL must not equal NEXT_PUBLIC_APP_URL — that causes a rewrite loop (508).',
+      );
+    }
+    return internal;
+  }
+
+  return (
+    internal ??
+    process.env['NEXT_PUBLIC_API_URL']?.replace(/\/$/, '') ??
+    'http://localhost:3001'
+  );
+}
+
+const API_URL = resolveApiRewriteTarget();
 const monorepoRoot = path.resolve(process.cwd(), '../..');
 
 const config: NextConfig = {
