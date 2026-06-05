@@ -9,11 +9,11 @@
  *     browser STT uses the Web Speech API by default; server STT needs a direct API URL.
  *   - No experimental features — stability over cutting edge for a v1 product.
  *
- * Environment variables (see DEPLOY.local.md or Vercel / Render dashboards):
- *   NEXT_PUBLIC_API_URL  — Fastify API base URL. Default: http://localhost:3002
- *                          In Docker: http://api:3001 (service name resolves via Docker DNS)
- *   NEXT_PUBLIC_WS_URL   — WebSocket URL override. Leave empty for auto-derivation.
- *   NEXT_PUBLIC_APP_URL  — Public-facing app URL for metadata.
+ * Environment variables (see README Deployment + apps/web/vercel.json):
+ *   API_INTERNAL_URL     — Vercel/rewrite only: https://noteleaf-api.onrender.com (never the Vercel URL)
+ *   NEXT_PUBLIC_APP_URL  — https://noteleaf.vercel.app in production
+ *   NEXT_PUBLIC_API_URL  — same as app URL in production (browser uses /api rewrites)
+ *   NEXT_PUBLIC_WS_URL   — optional; browser STT default needs no WebSocket
  */
 
 import type { NextConfig } from 'next';

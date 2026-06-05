@@ -12,7 +12,7 @@
 #   postgres healthy → migrate completes → api healthy → web starts
 #
 # Quick start:
-#   1. Create root .env from DEPLOY.local.md (Docker Compose template)
+#   1. Create root .env (local). Production: .env.production → Render/Vercel dashboards
 #   2. docker compose up --build
 #
 # Access:

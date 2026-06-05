@@ -6,7 +6,7 @@
  * POST /api/identity/verify-code — validate the code, link or recover a UUID
  *
  * Email delivery:
- *   Set RESEND_API_KEY in .env to enable real email delivery via Resend.
+ *   Set RESEND_API_KEY in root .env (local) or Render env (production).
  *   Set FROM_EMAIL to your verified sender (default: onboarding@resend.dev).
  *
  *   When RESEND_API_KEY is not set the code is returned in devCode so you can

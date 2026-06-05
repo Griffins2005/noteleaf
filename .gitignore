@@ -11,14 +11,11 @@ build/
 .turbo/
 *.tsbuildinfo
 
-# Environment — never commit (only root .env + .env.production)
+# Environment — never commit secrets (see README Deployment)
 .env
 .env.production
 .env.local
 .env.*.local
-
-# Local deployment guide (Vercel + Render — not shared via git)
-DEPLOY.local.md
 
 # Logs
 *.log

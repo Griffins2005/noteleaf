@@ -1,0 +1,46 @@
+# Deployed when you connect this Blueprint on Render (not from markdown docs).
+# Secrets: paste from .env.production into the Render dashboard.
+# https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: noteleaf-api
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_URL
+        value: https://noteleaf.vercel.app
+      - key: ALLOWED_ORIGINS
+        value: https://noteleaf.vercel.app
+      - key: API_URL
+        value: https://noteleaf-api.onrender.com
+      - key: NVIDIA_STT_MODE
+        value: cloud
+      - key: NVIDIA_FUNCTION_ID
+        value: bb0837de-8c7b-481f-9ec8-ef5663e9c1fa
+      - key: RATE_LIMIT_MAX
+        value: 100
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 60000
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_DATABASE_URL
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: FROM_EMAIL
+        sync: false

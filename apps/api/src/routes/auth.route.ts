@@ -4,7 +4,7 @@
  *
  * Routes:
  *   GET  /api/auth/google          → Redirect to Google OAuth consent screen
- *   GET  /api/auth/google/callback → Handle Google callback, set auth cookies, redirect to /
+ *   GET  /api/auth/google/callback → Handle Google callback (redirect URI = APP_URL + /api/... on Vercel)
  *   POST /api/auth/email/send      → Send 6-digit OTP to email (max 3/10 min)
  *   POST /api/auth/email/verify    → Verify OTP (max 5 attempts), set auth cookies
  *   POST /api/auth/refresh         → Rotate refresh token cookie, issue new access token cookie
@@ -48,15 +48,39 @@ import type { PrismaClient } from '@prisma/client';
 
 const GOOGLE_CLIENT_ID     = process.env['GOOGLE_CLIENT_ID']     ?? '';
 const GOOGLE_CLIENT_SECRET = process.env['GOOGLE_CLIENT_SECRET'] ?? '';
-const APP_URL              = process.env['APP_URL']              ?? 'http://localhost:3000';
+const APP_URL              = process.env['APP_URL']              ?? 'http://localhost:3003';
 const IS_PRODUCTION        = process.env['NODE_ENV'] === 'production';
 
-// Public browser origin (Vercel, Docker web, etc.). OAuth callback must match the URL
-// users hit in the browser — including /api when Next.js rewrites proxy to the API host.
-const GOOGLE_REDIRECT_URI = `${APP_URL.replace(/\/$/, '')}/api/auth/google/callback`;
 const GOOGLE_AUTH_URL     = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL    = 'https://oauth2.googleapis.com/token';
 const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo';
+
+function headerFirst(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+/** Browser-facing app origin (Vercel). Not the Render API hostname. */
+function resolvePublicAppUrl(request: { headers: Record<string, string | string[] | undefined> }): string {
+  const fromEnv = APP_URL.replace(/\/$/, '');
+  const envIsLocalhost = /^http:\/\/localhost(:\d+)?$/.test(fromEnv);
+
+  if (!envIsLocalhost) return fromEnv;
+
+  const forwardedHost = headerFirst(request.headers['x-forwarded-host']);
+  const host = forwardedHost ?? headerFirst(request.headers['host']);
+  const proto =
+    headerFirst(request.headers['x-forwarded-proto'])?.split(',')[0]?.trim() ?? 'https';
+
+  if (host && !host.includes('.onrender.com')) {
+    return `${proto}://${host}`;
+  }
+
+  return fromEnv;
+}
+
+function googleRedirectUri(request: { headers: Record<string, string | string[] | undefined> }): string {
+  return `${resolvePublicAppUrl(request)}/api/auth/google/callback`;
+}
 
 // Email setup
 
@@ -216,7 +240,7 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
 
   // GET /api/auth/google
 
-  fastify.get('/auth/google', async (_request, reply) => {
+  fastify.get('/auth/google', async (request, reply) => {
     if (!GOOGLE_CLIENT_ID) {
       return reply.code(503).send({
         success: false,
@@ -225,9 +249,10 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
       });
     }
 
+    const redirectUri = googleRedirectUri(request);
     const params = new URLSearchParams({
       client_id:     GOOGLE_CLIENT_ID,
-      redirect_uri:  GOOGLE_REDIRECT_URI,
+      redirect_uri:  redirectUri,
       response_type: 'code',
       scope:         'openid email profile',
       access_type:   'offline',
@@ -244,8 +269,11 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const { code, error } = request.query;
 
+      const appUrl = resolvePublicAppUrl(request);
+      const redirectUri = googleRedirectUri(request);
+
       if (error || !code) {
-        return reply.redirect(`${APP_URL}/auth?error=google_cancelled`);
+        return reply.redirect(`${appUrl}/auth?error=google_cancelled`);
       }
 
       try {
@@ -256,7 +284,7 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
             code,
             client_id:     GOOGLE_CLIENT_ID,
             client_secret: GOOGLE_CLIENT_SECRET,
-            redirect_uri:  GOOGLE_REDIRECT_URI,
+            redirect_uri:  redirectUri,
             grant_type:    'authorization_code',
           }),
         });
@@ -286,10 +314,10 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
 
         logger.info({ userId: user.id, email: user.email }, 'Google sign-in success');
 
-        return reply.redirect(`${APP_URL}/`);
+        return reply.redirect(`${appUrl}/`);
       } catch (err) {
         logger.error({ err }, 'Google OAuth callback error');
-        return reply.redirect(`${APP_URL}/auth?error=google_failed`);
+        return reply.redirect(`${appUrl}/auth?error=google_failed`);
       }
     },
   );

@@ -14,6 +14,7 @@
     "type-check": "turbo run type-check",
     "test": "turbo run test",
     "verify": "npm run type-check && npm run lint && npm run test && npm run build",
+    "db:migrate:prod": "npm run db:migrate:prod -w @noteleaf/api",
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {

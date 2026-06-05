@@ -180,7 +180,7 @@ Without a Google client, the "Continue with Google" button is disabled.
 # 1. Clone the repository
 git clone <repo-url> noteleaf && cd noteleaf
 
-# 2. Create root .env (see DEPLOY.local.md — gitignored)
+# 2. Create root .env (see Environment variables above)
 nano .env
 
 # 4. Start the full stack
@@ -234,42 +234,52 @@ npm run dev
 
 ### Environment variables
 
-Root `.env` (used by Docker Compose):
+**Local:** root `.env` (gitignored). **Production:** root `.env.production` (gitignored) — copy values into Render and Vercel.
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `NVIDIA_API_KEY` | **Yes** | — | Free key from build.nvidia.com |
-| `JWT_SECRET` | **Yes** | dev fallback | Secret used to sign JWT tokens. Change before any deployment. |
-| `POSTGRES_PASSWORD` | **Yes** | `change_me` | PostgreSQL password. Change before any deployment. |
-| `RESEND_API_KEY` | No | — | Resend key for email delivery. Without it, OTP codes appear in the API response. |
-| `FROM_EMAIL` | No | `Noteleaf <onboarding@resend.dev>` | Sender address (must be verified in Resend if using a custom domain) |
-| `GOOGLE_CLIENT_ID` | No | — | Google OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | No | — | Google OAuth client secret |
-| `APP_URL` | No | `http://localhost:3003` | URL the browser uses to reach the frontend (used for OAuth redirect) |
-| `WEB_PORT` | No | `3003` | Host port for the Next.js app |
-| `API_PORT` | No | `3002` | Host port for the Fastify API |
-| `ALLOWED_ORIGINS` | No | `http://localhost:3003` | Comma-separated CORS origins |
-| `NEXT_PUBLIC_APP_URL` | No* | `http://localhost:3003` | Public frontend URL — baked into web Docker image at build time |
-| `NEXT_PUBLIC_API_URL` | No* | `http://localhost:3002` | Public API URL — baked into web Docker image at build time |
-| `API_URL` | No | `http://localhost:3002` | API URL for OAuth callbacks and server-side links |
-| `NODE_ENV` | No | `production` | Set to `development` for verbose logs and full error details |
-
-\* Required for production Docker builds when not using localhost defaults.
+| Variable | Local default | Production |
+|---|---|---|
+| `APP_URL` | `http://localhost:3003` | `https://noteleaf.vercel.app` |
+| `ALLOWED_ORIGINS` | `http://localhost:3003` | `https://noteleaf.vercel.app` |
+| `API_INTERNAL_URL` | `http://localhost:3001` | `https://noteleaf-api.onrender.com` (Vercel only) |
+| `NEXT_PUBLIC_APP_URL` | `http://localhost:3003` | `https://noteleaf.vercel.app` |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:3002` | `https://noteleaf.vercel.app` (same origin; `/api` proxied) |
+| `API_URL` | `http://localhost:3002` | `https://noteleaf-api.onrender.com` |
+| `DATABASE_URL` / `DIRECT_DATABASE_URL` | Docker Postgres `:5433` | Neon pooled + direct |
+| `NVIDIA_API_KEY`, `JWT_SECRET` | required | required |
 
 ---
 
 ## Deployment
 
-Production steps (Vercel frontend + Render backend), env templates, and troubleshooting live in **`DEPLOY.local.md`** at the repo root. That file is **gitignored** — keep a copy on your machine and in your password manager / team vault, not in the repo.
+Markdown docs are **not** deployed. What ships when you push `main`:
 
-**Local Docker:** root `.env` + optional `.env.production` (see `DEPLOY.local.md`), then:
+| File | Platform | What it does |
+|------|----------|----------------|
+| **`apps/web/vercel.json`** | Vercel | Build command + `API_INTERNAL_URL` / `NEXT_PUBLIC_*` |
+| **`turbo.json`** | Vercel | Passes env vars into `next build` |
+| **`render.yaml`** | Render (optional Blueprint) | Docker API + public env defaults |
+| **`.env.production`** | Neither (gitignored) | You paste secrets into Render + Vercel dashboards |
+
+**Live URLs:** [noteleaf.vercel.app](https://noteleaf.vercel.app) · API [noteleaf-api.onrender.com](https://noteleaf-api.onrender.com)
+
+**Render dashboard** (required secrets from `.env.production`): `DATABASE_URL`, `DIRECT_DATABASE_URL`, `JWT_SECRET`, `NVIDIA_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, plus `APP_URL` / `ALLOWED_ORIGINS` = `https://noteleaf.vercel.app` (already in `render.yaml` if you use Blueprint).
+
+**Google OAuth redirect URI:** `https://noteleaf.vercel.app/api/auth/google/callback`
+
+```bash
+npm run verify
+npm run db:migrate:prod
+curl -s https://noteleaf.vercel.app/api/health
+```
+
+**Troubleshooting:** 508 loop → `API_INTERNAL_URL` must be Render, not Vercel. `redirect_uri_mismatch` → set Render `APP_URL` to Vercel URL and redeploy API.
+
+**Local Docker:**
 
 ```bash
 docker compose up --build -d
 curl -s http://localhost:3002/api/health
 ```
-
-Before any release: `npm run verify` and apply migrations under `apps/api/prisma/migrations/`.
 
 ---
 
