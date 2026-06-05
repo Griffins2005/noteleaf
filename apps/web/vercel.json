@@ -1,5 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "cd ../.. && npm install",
-  "buildCommand": "cd ../.. && npx turbo build --filter=@noteleaf/web"
+  "buildCommand": "cd ../.. && npx turbo build --filter=@noteleaf/web",
+  "env": {
+    "API_INTERNAL_URL": "https://noteleaf-api.onrender.com",
+    "NEXT_PUBLIC_APP_URL": "https://noteleaf.vercel.app",
+    "NEXT_PUBLIC_API_URL": "https://noteleaf.vercel.app"
+  }
 }
