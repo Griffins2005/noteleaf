@@ -67,9 +67,13 @@ export function SignInPage() {
     }
   }, [step]);
 
-  // Wake the API while they read the page so the Google callback is not a cold start.
   useEffect(() => {
-    void fetch('/api/health', { credentials: 'include' }).catch(() => { /* warmup */ });
+    const wake = () => {
+      void fetch('/api/health', { credentials: 'include', cache: 'no-store' }).catch(() => { /* warmup */ });
+    };
+    wake();
+    const id = window.setInterval(wake, 4 * 60 * 1000);
+    return () => window.clearInterval(id);
   }, []);
 
   async function handleSendCode(e: React.FormEvent<HTMLFormElement>) {
@@ -134,6 +138,7 @@ export function SignInPage() {
   }
 
   function handleGoogleSignIn() {
+    void fetch('/api/health', { credentials: 'include', cache: 'no-store' }).catch(() => { /* warmup */ });
     window.location.href = '/api/auth/google';
   }
 

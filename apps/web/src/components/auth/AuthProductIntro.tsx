@@ -33,7 +33,7 @@ const TYPE_DOT: Record<(typeof SAMPLE_NOTES)[number]['type'], string> = {
 
 function Waveform() {
   return (
-    <div className="flex items-end gap-[2px] h-[14px]" aria-hidden="true">
+    <div className="flex items-end gap-[2px] h-[14px] shrink-0" aria-hidden="true">
       {[6, 12, 8, 16, 10, 14, 7].map((h, i) => (
         <span
           key={i}
@@ -62,7 +62,7 @@ export function AuthProductPreview() {
         <span className="text-[10px] font-mono text-white/45 shrink-0">Q3 planning · 12:08</span>
       </div>
 
-      <div className="px-4 py-3 border-b border-[var(--nl-border-subtle)] bg-[var(--nl-color-paper-sunken)]">
+      <div className="px-4 py-2.5 border-b border-[var(--nl-border-subtle)] bg-[var(--nl-color-paper-sunken)]">
         <div className="flex items-start gap-3">
           <Waveform />
           <p className="text-[12px] font-sans leading-relaxed text-[var(--nl-color-ink-secondary)]">
@@ -71,7 +71,7 @@ export function AuthProductPreview() {
         </div>
       </div>
 
-      <ul className="px-4 py-2.5 space-y-2">
+      <ul className="px-4 py-2 space-y-1.5">
         {SAMPLE_NOTES.map((note) => (
           <li key={note.type} className="flex items-start gap-2.5">
             <span className={`mt-[6px] w-1.5 h-1.5 rounded-full shrink-0 ${TYPE_DOT[note.type]}`} />
@@ -155,9 +155,7 @@ export function AuthProductIntro({ className }: { className?: string }) {
           </p>
         </div>
 
-        <div className="[@media(max-height:760px)]:hidden">
-          <AuthProductPreview />
-        </div>
+        <AuthProductPreview />
 
         <ol className="grid grid-cols-3 gap-3 lg:gap-4">
           {PHASES.map((phase, i) => (
@@ -173,7 +171,7 @@ export function AuthProductIntro({ className }: { className?: string }) {
           ))}
         </ol>
 
-        <p className="text-[11px] font-mono leading-relaxed text-[var(--nl-sidebar-text-muted)] [@media(max-height:700px)]:hidden">
+        <p className="text-[11px] font-mono leading-relaxed text-[var(--nl-sidebar-text-muted)]">
           Only the notes and transcript are saved to your account. The recording itself is never written or uploaded.
         </p>
       </div>
