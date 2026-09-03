@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { cn } from '@/lib/cn';
+import { LeafMark } from '@/components/auth/LeafMark';
 import type { SessionListItem } from '@noteleaf/shared-types';
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -137,32 +138,22 @@ export function NavigationSidebar({
 
   return (
     <aside
-      className="w-[220px] shrink-0 flex flex-col overflow-hidden"
+      className="w-[240px] h-full min-h-0 shrink-0 flex flex-col overflow-hidden"
       style={{ background: 'var(--nl-sidebar-bg)', borderRight: '1px solid var(--nl-sidebar-border)' }}
       aria-label="Sessions navigation"
     >
-      {/* Logo */}
-      <div className="px-4 pt-6 pb-4 shrink-0 flex flex-col items-center gap-2.5">
-        <div
-          aria-hidden="true"
-          style={{
-            width: 46, height: 46, borderRadius: 13, flexShrink: 0,
-            background: 'linear-gradient(145deg, #1fa463 0%, #0d7a47 100%)',
-            boxShadow: '0 3px 12px rgba(13,122,71,0.45), inset 0 1px 0 rgba(255,255,255,0.18)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-        >
-          <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true">
-            <path d="M13 24C13 24 5 18 5 11.5C5 7.36 8.58 4 13 4C17.42 4 21 7.36 21 11.5C21 18 13 24 13 24Z" fill="white" opacity="0.95"/>
-            <path d="M13 24L13 12" stroke="rgba(13,122,71,0.5)" strokeWidth="1.6" strokeLinecap="round"/>
-            <path d="M13 15.5L9.5 13.5" stroke="rgba(13,122,71,0.35)" strokeWidth="1.2" strokeLinecap="round"/>
-            <path d="M13 19L9.5 17" stroke="rgba(13,122,71,0.35)" strokeWidth="1.2" strokeLinecap="round"/>
-          </svg>
+      <div className="shrink-0 px-4 pt-5 pb-4 flex items-center gap-2.5">
+        <LeafMark size={32} />
+        <div className="min-w-0">
+          <p className="font-serif text-[16px] font-bold leading-none text-white" style={{ letterSpacing: '-0.2px' }}>
+            Noteleaf
+          </p>
+          <p className="text-[9px] font-mono uppercase tracking-[1.4px] mt-1" style={{ color: 'var(--nl-sidebar-text-muted)' }}>
+            Sessions
+          </p>
         </div>
-        <span className="font-serif text-[17px] font-bold leading-tight text-white" style={{ letterSpacing: '-0.2px' }}>Noteleaf</span>
       </div>
 
-      {/* New session */}
       <div className="px-3 pb-3 shrink-0">
         <button
           type="button"
@@ -172,9 +163,9 @@ export function NavigationSidebar({
           className={cn(
             'w-full flex items-center justify-center gap-1.5 py-2 rounded-[8px]',
             'text-[12px] font-mono font-medium transition-colors',
-            'border border-white/35 text-white bg-white/10',
-            'hover:bg-white/15 hover:border-white/50',
-            'disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white/10 disabled:hover:border-white/35',
+            'border border-white/20 text-white bg-white/[0.08]',
+            'hover:bg-white/[0.14] hover:border-white/35',
+            'disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white/[0.08] disabled:hover:border-white/20',
           )}
         >
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -235,15 +226,11 @@ export function NavigationSidebar({
         ))}
       </nav>
 
-      {/* Bottom actions */}
-      <div className="shrink-0 px-3 py-3" style={{ borderTop: '1px solid var(--nl-sidebar-border)' }}>
+      <div className="shrink-0 mt-auto px-3 py-4" style={{ borderTop: '1px solid var(--nl-sidebar-border)' }}>
         <button
           type="button"
           onClick={onOpenSettings}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-[6px] text-[11px] font-mono transition-colors"
-          style={{ color: 'var(--nl-sidebar-text-muted)' }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--nl-sidebar-bg-hover)'; e.currentTarget.style.color = 'var(--nl-sidebar-text)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--nl-sidebar-text-muted)'; }}
+          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-[8px] text-[12px] font-mono text-[var(--nl-sidebar-text-muted)] hover:text-[var(--nl-sidebar-text)] hover:bg-[var(--nl-sidebar-bg-hover)] transition-colors"
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>

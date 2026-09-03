@@ -141,7 +141,7 @@ export function SignInPage() {
 
   return (
     <div className="min-h-screen flex flex-col lg:h-screen lg:grid lg:grid-cols-2 lg:overflow-hidden">
-      <AuthProductIntro className="order-2 lg:order-1" />
+      <AuthProductIntro className="order-2 lg:order-1 lg:min-h-0 lg:h-full lg:overflow-y-auto" />
 
       <div className="order-1 lg:order-2 flex flex-col bg-[var(--nl-color-paper-sunken)] lg:h-full lg:overflow-y-auto">
         <div className="flex-1 flex flex-col justify-center px-5 py-8 sm:px-10 lg:px-12 xl:px-16">

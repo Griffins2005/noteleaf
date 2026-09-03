@@ -491,7 +491,8 @@ export function NotepadShell() {
       {/* ── Dark navigation sidebar ──────────────────────────────── */}
       <div
         className={cn(
-          'fixed inset-y-0 left-0 z-50 transition-transform duration-200 lg:relative lg:z-auto lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 flex h-full transition-transform duration-200',
+          'lg:relative lg:z-auto lg:h-full lg:shrink-0 lg:translate-x-0',
           sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0',
         )}
       >

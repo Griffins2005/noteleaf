@@ -106,9 +106,10 @@ export function AuthProductIntro({ className }: { className?: string }) {
   return (
     <section
       className={cn(
-        'relative flex flex-col justify-center overflow-hidden',
+        'relative flex flex-col justify-start',
         'bg-[var(--nl-sidebar-bg)] text-[var(--nl-sidebar-text)]',
-        'px-6 py-10 sm:px-10 lg:h-full lg:overflow-y-auto lg:px-12 xl:px-16 lg:py-12',
+        'px-6 py-10 sm:px-10',
+        'lg:h-full lg:min-h-0 lg:overflow-y-auto lg:px-10 xl:px-14 lg:pt-12 lg:pb-8 xl:pt-14 xl:pb-10',
         className,
       )}
     >
@@ -121,12 +122,12 @@ export function AuthProductIntro({ className }: { className?: string }) {
         }}
       />
 
-      <div className="relative z-[1] w-full max-w-[480px] mx-auto space-y-6 lg:space-y-7">
+      <div className="relative z-[1] w-full max-w-[440px] mx-auto space-y-5 lg:space-y-5">
         <div className="flex items-center gap-3">
-          <LeafMark size={40} />
+          <LeafMark size={34} />
           <div>
             <p
-              className="font-serif text-[20px] font-bold leading-none text-white"
+              className="font-serif text-[18px] font-bold leading-none text-white"
               style={{ letterSpacing: '-0.3px' }}
             >
               Noteleaf
@@ -137,9 +138,9 @@ export function AuthProductIntro({ className }: { className?: string }) {
           </div>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           <h1
-            className="font-serif text-[28px] sm:text-[34px] lg:text-[36px] font-medium leading-[1.15] text-white"
+            className="font-serif text-[26px] sm:text-[30px] xl:text-[32px] font-medium leading-[1.18] text-white"
             style={{ letterSpacing: '-0.5px' }}
           >
             Be{' '}
@@ -154,9 +155,11 @@ export function AuthProductIntro({ className }: { className?: string }) {
           </p>
         </div>
 
-        <AuthProductPreview />
+        <div className="[@media(max-height:760px)]:hidden">
+          <AuthProductPreview />
+        </div>
 
-        <ol className="grid grid-cols-3 gap-3 lg:gap-5">
+        <ol className="grid grid-cols-3 gap-3 lg:gap-4">
           {PHASES.map((phase, i) => (
             <li key={phase.label} className="min-w-0">
               <p className="text-[10px] font-mono uppercase tracking-[1.4px] text-emerald-300/80">
@@ -170,7 +173,7 @@ export function AuthProductIntro({ className }: { className?: string }) {
           ))}
         </ol>
 
-        <p className="text-[11px] font-mono leading-relaxed text-[var(--nl-sidebar-text-muted)]">
+        <p className="text-[11px] font-mono leading-relaxed text-[var(--nl-sidebar-text-muted)] [@media(max-height:700px)]:hidden">
           Only the notes and transcript are saved to your account. The recording itself is never written or uploaded.
         </p>
       </div>
