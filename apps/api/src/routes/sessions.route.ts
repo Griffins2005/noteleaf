@@ -24,6 +24,7 @@ import type {
   ChatMessage,
 } from '@noteleaf/shared-types';
 import { logger } from '../logger.js';
+import { purgeExpiredSessionsForUser } from '../services/retention.service.js';
 
 // Validation schemas
 
@@ -99,6 +100,15 @@ export async function sessionsRoute(fastify: FastifyInstance): Promise<void> {
 
       const { q, limit: limitStr, cursor } = request.query;
       const pageSize = Math.min(Number(limitStr ?? 50), 100);
+
+      try {
+        const purged = await purgeExpiredSessionsForUser(fastify.db, userUuid);
+        if (purged > 0) {
+          logger.info({ userUuid, purged }, 'Purged expired sessions on list');
+        }
+      } catch (err) {
+        logger.error({ err, userUuid }, 'Retention purge on list failed');
+      }
 
       const where: Prisma.SessionWhereInput = { userUuid };
       if (q?.trim()) {

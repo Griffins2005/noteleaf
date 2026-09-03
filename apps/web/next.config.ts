@@ -85,7 +85,9 @@ const config: NextConfig = {
   async rewrites() {
     return [
       {
-        source: '/api/:path*',
+        // Keep /api/auth/google on Next (instant 302 to Google). Everything else,
+        // including /api/auth/google/callback, still goes to the Fastify API.
+        source: '/api/:path((?!auth/google$).*)',
         destination: `${API_URL}/api/:path*`,
       },
     ];

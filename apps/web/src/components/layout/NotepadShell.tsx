@@ -4,9 +4,11 @@ import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 // Feature components
-import Link from 'next/link';
 import { ChatPanel } from '@/features/chat/ChatPanel';
+import { SettingsPanel } from '@/components/layout/SettingsPanel';
 import { TabCoachPopover } from '@/features/meeting/components/TabCoachPopover';
+import { MeetingHowToStrip } from '@/features/meeting/components/MeetingHowToStrip';
+import { PostMeetingActions } from '@/features/meeting/components/PostMeetingActions';
 import { getMeetingPhase } from '@/lib/meetingPhase';
 import {
   dismissTabCoach,
@@ -24,10 +26,9 @@ import { AiSummaryCard } from '@/features/notes/components/AiSummaryCard';
 
 // UI
 import { Button } from '@/components/ui/Button';
-import { Toggle } from '@/components/ui/Toggle';
 
 // Hooks
-import { useRecordingState } from '@/features/recording/hooks/useRecordingState';
+import { useRecordingState, type RecordingStatus, type AutosaveStatus } from '@/features/recording/hooks/useRecordingState';
 
 // Stores
 import { useSessionStore, selectActiveSessionListItem } from '@/store/session.store';
@@ -49,155 +50,6 @@ import { buildInstantRecap } from '@/lib/instantRecap';
 import type { AiSummary, SummarizeRequest, TranscriptSegment, NoteType, ChatMessage } from '@noteleaf/shared-types';
 import { cn } from '@/lib/cn';
 
-// ─── Settings panel ───────────────────────────────────────────────────────────
-
-function SettingsPanel() {
-  const { preferences, setPreference } = useUserStore();
-  const user     = useAuthStore((s) => s.user);
-  const signOut  = useAuthStore((s) => s.signOut);
-
-  const [retentionDays, setRetentionDays] = useState<number | null>(preferences.retentionDays);
-  const [prefSaved, setPrefSaved]         = useState(false);
-  const [deleting, setDeleting]           = useState(false);
-
-  async function handleSaveRetention(days: number | null) {
-    setRetentionDays(days);
-    setPreference('retentionDays', days);
-    try {
-      await http.patch('/api/user/preferences', { retentionDays: days });
-      setPrefSaved(true);
-      setTimeout(() => setPrefSaved(false), 2000);
-    } catch { /* non-fatal */ }
-  }
-
-  async function handleDeleteAccount() {
-    if (!confirm('Delete your account and all sessions permanently? This cannot be undone.')) return;
-    setDeleting(true);
-    try {
-      await http.delete('/api/auth/account');
-      await signOut();
-    } catch {
-      setDeleting(false);
-    }
-  }
-
-  const prefRow = (label: string, sub: string, key: keyof typeof preferences) => (
-    <div className="flex items-center justify-between py-3 border-b border-[var(--nl-border-subtle)] last:border-0 gap-4">
-      <div>
-        <p className="text-[12px] font-mono text-[var(--nl-color-ink-secondary)]">{label}</p>
-        <p className="text-[10px] font-mono text-[var(--nl-color-ink-tertiary)] mt-0.5">{sub}</p>
-      </div>
-      <Toggle
-        checked={preferences[key] as boolean}
-        onChange={(v) => setPreference(key, v)}
-        label={label}
-      />
-    </div>
-  );
-
-  return (
-    <div className="flex-1 overflow-y-auto p-7 space-y-8">
-
-      {/* Account */}
-      <section>
-        <h3 className="text-[10px] font-mono uppercase tracking-[1px] text-[var(--nl-color-ink-tertiary)] pb-3 border-b border-[var(--nl-border-subtle)] mb-4">
-          Account
-        </h3>
-        <div className="space-y-3">
-          {user && (
-            <div className="flex items-center gap-3 px-3 py-2.5 rounded-[var(--nl-radius-md)] bg-[var(--nl-color-paper-sunken)] border border-[var(--nl-border-subtle)]">
-              {user.avatar && (
-                <img src={user.avatar} alt="" className="w-7 h-7 rounded-full shrink-0" />
-              )}
-              <div className="min-w-0">
-                {user.name && <p className="text-[12px] font-sans font-medium text-[var(--nl-color-ink-primary)] truncate">{user.name}</p>}
-                {user.email && <p className="text-[11px] font-mono text-[var(--nl-color-ink-tertiary)] truncate">{user.email}</p>}
-              </div>
-            </div>
-          )}
-          <Button variant="secondary" size="sm" onClick={() => void signOut()}>
-            Sign out
-          </Button>
-        </div>
-      </section>
-
-      {/* Preferences */}
-      <section>
-        <h3 className="text-[10px] font-mono uppercase tracking-[1px] text-[var(--nl-color-ink-tertiary)] pb-3 border-b border-[var(--nl-border-subtle)] mb-2">
-          Preferences
-        </h3>
-        {prefRow('Auto-classify notes', 'Label notes as action, decision, or insight', 'autoClassify')}
-        {prefRow('Show live transcript', 'Display real-time speech while recording', 'showLiveTranscript')}
-        {prefRow('Auto-tag keywords', 'Extract keyword tags on each note card', 'autoTagKeywords')}
-      </section>
-
-      {/* Session retention */}
-      <section>
-        <h3 className="text-[10px] font-mono uppercase tracking-[1px] text-[var(--nl-color-ink-tertiary)] pb-3 border-b border-[var(--nl-border-subtle)] mb-4">
-          Session retention
-        </h3>
-        <p className="text-[10px] font-mono text-[var(--nl-color-ink-tertiary)] leading-relaxed mb-3">
-          Choose how long your sessions are kept. Auto-delete runs daily.
-        </p>
-        <div className="grid grid-cols-2 gap-2 mb-3">
-          {([
-            { label: 'Keep forever', days: null },
-            { label: 'Delete after 30 days', days: 30 },
-          ] as const).map(({ label, days }) => (
-            <button
-              key={label}
-              type="button"
-              onClick={() => void handleSaveRetention(days)}
-              className={cn(
-                'px-3 py-2.5 rounded-[var(--nl-radius-md)] border text-left text-[11px] font-mono transition-all',
-                retentionDays === days
-                  ? 'border-[var(--nl-color-accent-primary)] bg-[var(--nl-color-accent-subtle)] text-[var(--nl-color-accent-primary)]'
-                  : 'border-[var(--nl-border-default)] text-[var(--nl-color-ink-secondary)] hover:border-[var(--nl-border-strong)]',
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        {prefSaved && <span className="text-[11px] font-mono text-[var(--nl-color-accent-primary)]">✓ Saved</span>}
-      </section>
-
-      {/* Danger zone */}
-      <section>
-        <h3 className="text-[10px] font-mono uppercase tracking-[1px] text-[var(--nl-color-ink-tertiary)] pb-3 border-b border-[var(--nl-border-subtle)] mb-4">
-          Danger zone
-        </h3>
-        <button
-          type="button"
-          onClick={() => void handleDeleteAccount()}
-          disabled={deleting}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-[var(--nl-radius-md)] border border-red-200 bg-red-50 text-left transition-all hover:bg-red-100 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <div className="w-8 h-8 rounded-full bg-red-100 border border-red-200 flex items-center justify-center shrink-0">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-500">
-              <polyline points="3 6 5 6 21 6"/>
-              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-              <path d="M10 11v6M14 11v6"/>
-              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-            </svg>
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-[12px] font-mono font-medium text-red-600">{deleting ? 'Deleting…' : 'Delete account'}</p>
-            <p className="text-[10px] font-mono text-red-400 mt-0.5">Permanently removes all your sessions and data</p>
-          </div>
-        </button>
-      </section>
-
-      {/* Legal */}
-      <p className="text-[10px] font-mono text-[var(--nl-color-ink-disabled)] pt-2">
-        <Link href="/terms" className="hover:text-[var(--nl-color-ink-tertiary)] underline underline-offset-2 transition-colors">
-          Terms &amp; Privacy Policy
-        </Link>
-      </p>
-    </div>
-  );
-}
-
 // ─── Main shell ───────────────────────────────────────────────────────────────
 
 type ActiveTab = 'notes' | 'transcript' | 'summary' | 'chat' | 'settings';
@@ -216,6 +68,10 @@ export function NotepadShell() {
   } | null>(null);
   const notesEndRef = useRef<HTMLDivElement>(null);
   const hasRestoredSession = useRef(false);
+  const captureBusyRef = useRef(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [noteSaveError, setNoteSaveError] = useState<string | null>(null);
 
   const qc = useQueryClient();
   const [noteSearch, setNoteSearch] = useState('');
@@ -232,6 +88,7 @@ export function NotepadShell() {
     setActiveSession,
     createSession,
     setActiveSessionTitle,
+    setActiveSessionDuration,
     updateNote,
     removeSession,
   } = useSessionStore();
@@ -251,6 +108,7 @@ export function NotepadShell() {
     sttWarning,
     startRecording,
     stopRecording,
+    autosaveStatus,
   } = useRecordingState();
 
   // ── Query: session list ────────────────────────────────────────────────
@@ -272,6 +130,10 @@ export function NotepadShell() {
   const createSessionMutation = useMutation({
     mutationFn: (payload: { id: string; title: string }) => sessionsApi.create(payload),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['sessions', userId] }),
+    onError: (_err, payload) => {
+      if (captureBusyRef.current) return;
+      removeSession(payload.id);
+    },
   });
 
   const deleteSessionMutation = useMutation({
@@ -292,6 +154,9 @@ export function NotepadShell() {
   // ── Handlers ───────────────────────────────────────────────────────────
 
   function handleNewSession() {
+    if (recordingStatus === 'recording' || recordingStatus === 'connecting' || recordingStatus === 'stopping') {
+      return;
+    }
     const newId = createSession(userId);
     createSessionMutation.mutate({ id: newId, title: '' });
     setAiState('idle');
@@ -299,6 +164,9 @@ export function NotepadShell() {
     setAiEnhancing(false);
     setTabCoach(null);
     setChatMessages([]);
+    setSessionError(null);
+    setNoteSaveError(null);
+    setActiveTab('notes');
     if (typeof window !== 'undefined') {
       localStorage.setItem(LAST_SESSION_KEY, newId);
     }
@@ -306,14 +174,15 @@ export function NotepadShell() {
 
   async function handleSelectSession(sessionId: string) {
     if (sessionId === activeSessionId) return;
+    if (recordingStatus === 'recording' || recordingStatus === 'connecting' || recordingStatus === 'stopping') {
+      return;
+    }
     setAiState('idle');
     setAiSummary(undefined);
     setAiEnhancing(false);
     setTabCoach(null);
-
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(LAST_SESSION_KEY, sessionId);
-    }
+    setSessionError(null);
+    setNoteSaveError(null);
 
     try {
       const session = await sessionsApi.get(sessionId);
@@ -337,9 +206,11 @@ export function NotepadShell() {
         setAiState('success');
         setAiSummary(session.aiSummary);
       }
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(LAST_SESSION_KEY, sessionId);
+      }
     } catch {
-      setActiveSession(sessionId, [], '', []);
-      setChatMessages([]);
+      setSessionError("Couldn't load that session. Try again.");
     }
   }
 
@@ -432,8 +303,10 @@ export function NotepadShell() {
     if (!activeSessionId) return;
     try {
       await sessionsApi.update(activeSessionId, { notes: updatedNotes });
+      setNoteSaveError(null);
     } catch (err) {
       console.error('[Notes] Failed to save note edit:', err);
+      setNoteSaveError("Couldn't save that edit. Check your connection and try again.");
     }
   }
 
@@ -460,7 +333,7 @@ export function NotepadShell() {
       transcript: activeTranscript,
       transcriptSegments: activeTranscriptSegments,
       aiSummary,
-      durationSeconds: elapsedSeconds,
+      durationSeconds: displayDuration,
     });
     exportFormatter.triggerDownload(txt, filename);
   }
@@ -479,6 +352,7 @@ export function NotepadShell() {
     const rawTitle   = stoppedSessions.find((s) => s.id === stoppedSessionId)?.title ?? '';
     const hasContent = stoppedNotes.length > 0 || stoppedTranscriptSegments.length > 0 || stoppedTranscript.trim().length > 0;
 
+    setActiveSessionDuration(elapsedSeconds);
     void qc.invalidateQueries({ queryKey: ['sessions', userId] });
 
     if (hasContent && stoppedSessionId) {
@@ -528,6 +402,14 @@ export function NotepadShell() {
   // ── Helpers ────────────────────────────────────────────────────────────
 
   const isRecording = recordingStatus === 'recording';
+  const isCaptureBusy =
+    recordingStatus === 'recording' ||
+    recordingStatus === 'connecting' ||
+    recordingStatus === 'stopping';
+  const displayDuration = isCaptureBusy || recordingStatus === 'error'
+    ? elapsedSeconds
+    : (activeItem?.durationSeconds || elapsedSeconds);
+  captureBusyRef.current = isCaptureBusy;
 
   const hasSessionContent =
     activeNotes.length > 0 ||
@@ -547,6 +429,8 @@ export function NotepadShell() {
   });
 
   function handleTabSelect(tab: ActiveTab) {
+    if (tab === activeTab) return;
+
     if (tab === 'settings') {
       setActiveTab(tab);
       setTabCoach(null);
@@ -595,15 +479,41 @@ export function NotepadShell() {
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--nl-color-paper-bg)]">
 
+      {sidebarOpen && (
+        <button
+          type="button"
+          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+          aria-label="Close sessions menu"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* ── Dark navigation sidebar ──────────────────────────────── */}
-      <NavigationSidebar
-        sessions={sessions}
-        activeSessionId={activeSessionId}
-        onSelectSession={handleSelectSession}
-        onDeleteSession={(id) => deleteSessionMutation.mutate(id)}
-        onNewSession={handleNewSession}
-        onOpenSettings={() => setActiveTab('settings')}
-      />
+      <div
+        className={cn(
+          'fixed inset-y-0 left-0 z-50 transition-transform duration-200 lg:relative lg:z-auto lg:translate-x-0',
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0',
+        )}
+      >
+        <NavigationSidebar
+          sessions={sessions}
+          activeSessionId={activeSessionId}
+          recordingLocked={isCaptureBusy}
+          onSelectSession={(id) => {
+            setSidebarOpen(false);
+            void handleSelectSession(id);
+          }}
+          onDeleteSession={(id) => deleteSessionMutation.mutate(id)}
+          onNewSession={() => {
+            setSidebarOpen(false);
+            handleNewSession();
+          }}
+          onOpenSettings={() => {
+            setSidebarOpen(false);
+            setActiveTab('settings');
+          }}
+        />
+      </div>
 
       {/* ── Main content ────────────────────────────────────────── */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden bg-[var(--nl-color-paper-base)]">
@@ -612,6 +522,15 @@ export function NotepadShell() {
         {activeTab === 'settings' && (
           <div className="flex flex-col flex-1 overflow-hidden">
             <header className="flex items-center gap-4 px-8 py-5 border-b border-[var(--nl-border-subtle)] shrink-0">
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Open sessions"
+                aria-expanded={sidebarOpen}
+                className="lg:hidden w-9 h-9 flex items-center justify-center rounded-[var(--nl-radius-md)] text-[var(--nl-color-ink-tertiary)] hover:text-[var(--nl-color-ink-primary)] hover:bg-[var(--nl-color-paper-sunken)] transition-colors shrink-0"
+              >
+                <MenuIcon />
+              </button>
               <button
                 type="button"
                 onClick={() => handleTabSelect('notes')}
@@ -634,8 +553,17 @@ export function NotepadShell() {
         {activeTab !== 'settings' && (
           <>
             {/* Session header */}
-            <header className="shrink-0 px-7 pt-6 bg-[var(--nl-color-paper-base)] border-b border-[var(--nl-border-subtle)]">
+            <header className="shrink-0 px-4 sm:px-7 pt-6 bg-[var(--nl-color-paper-base)] border-b border-[var(--nl-border-subtle)]">
               <div className="flex items-start justify-between mb-4">
+                <button
+                  type="button"
+                  onClick={() => setSidebarOpen(true)}
+                  aria-label="Open sessions"
+                  aria-expanded={sidebarOpen}
+                  className="lg:hidden w-9 h-9 mt-1 mr-2 flex items-center justify-center rounded-[var(--nl-radius-md)] text-[var(--nl-color-ink-tertiary)] hover:text-[var(--nl-color-ink-primary)] hover:bg-[var(--nl-color-paper-sunken)] transition-colors shrink-0"
+                >
+                  <MenuIcon />
+                </button>
                 <div className="flex-1 min-w-0 mr-4">
                   <input
                     type="text"
@@ -649,7 +577,7 @@ export function NotepadShell() {
                   <div className="flex items-center gap-3 mt-1">
                     {sessionDate && <span className="text-[11px] font-mono text-[var(--nl-color-ink-tertiary)]">{sessionDate}</span>}
                     {activeNotes.length > 0 && <span className="text-[11px] font-mono text-[var(--nl-color-ink-tertiary)]">· {activeNotes.length} notes</span>}
-                    {elapsedSeconds > 0 && recordingStatus === 'idle' && <span className="text-[11px] font-mono text-[var(--nl-color-ink-tertiary)]">· {formatDuration(elapsedSeconds)}</span>}
+                    {displayDuration > 0 && recordingStatus === 'idle' && <span className="text-[11px] font-mono text-[var(--nl-color-ink-tertiary)]">· {formatDuration(displayDuration)}</span>}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 pt-1">
@@ -662,7 +590,10 @@ export function NotepadShell() {
                   <button
                     type="button"
                     onClick={handleExport}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--nl-radius-sm)] text-[11px] font-mono border border-[var(--nl-border-default)] text-[var(--nl-color-ink-tertiary)] hover:border-[var(--nl-border-strong)] hover:text-[var(--nl-color-ink-secondary)] transition-colors"
+                    disabled={!hasSessionContent}
+                    aria-label={hasSessionContent ? 'Export this session' : 'Export unavailable — record a session first'}
+                    title={hasSessionContent ? 'Export this session' : 'Nothing to export yet — record a session first'}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--nl-radius-sm)] text-[11px] font-mono border border-[var(--nl-border-default)] text-[var(--nl-color-ink-tertiary)] hover:border-[var(--nl-border-strong)] hover:text-[var(--nl-color-ink-secondary)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-[var(--nl-border-default)] disabled:hover:text-[var(--nl-color-ink-tertiary)]"
                   >
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     Export
@@ -671,7 +602,7 @@ export function NotepadShell() {
               </div>
 
               {/* Tab nav */}
-              <nav className="flex gap-0 border-b border-[var(--nl-border-subtle)]" aria-label="Session view">
+              <nav className="flex gap-0 overflow-x-auto border-b border-[var(--nl-border-subtle)]" aria-label="Session view">
                 {SESSION_TABS.map(({ id, label }) => (
                   <div key={id} className="relative">
                     <button
@@ -680,7 +611,7 @@ export function NotepadShell() {
                       aria-current={activeTab === id ? 'page' : undefined}
                       aria-describedby={tabCoach?.tab === id ? `tab-coach-${id}` : undefined}
                       className={cn(
-                        'relative px-4 py-2.5 text-[13px] font-sans transition-colors focus-visible:outline-none',
+                        'relative px-4 py-2.5 text-[13px] font-sans whitespace-nowrap shrink-0 transition-colors focus-visible:outline-none',
                         activeTab === id
                           ? 'text-black font-medium border-b-2 border-[var(--nl-color-navy)] -mb-px'
                           : 'text-[var(--nl-color-ink-tertiary)] hover:text-black border-b-2 border-transparent -mb-px',
@@ -708,6 +639,15 @@ export function NotepadShell() {
                 ))}
               </nav>
             </header>
+
+            {(sessionError || noteSaveError) && (
+              <div
+                role="alert"
+                className="mx-4 sm:mx-7 mt-3 px-4 py-2.5 rounded-[var(--nl-radius-sm)] bg-[var(--nl-color-danger-subtle)] border border-red-200 text-[11px] font-mono text-[var(--nl-color-danger)] shrink-0"
+              >
+                {sessionError ?? noteSaveError}
+              </div>
+            )}
 
             {/* Tab content */}
             <div className={cn(
@@ -761,10 +701,11 @@ export function NotepadShell() {
                               </div>
                               <div className="text-center">
                                 <p className="font-serif text-[18px] text-[var(--nl-color-ink-tertiary)] mb-1">Ready to capture</p>
-                                <p className="text-[12px] font-mono text-[var(--nl-color-ink-disabled)] max-w-[260px] leading-relaxed">
-                                  Open Noteleaf beside your meeting — Zoom, Teams, Meet, or in person. Tap the mic and focus on the conversation, not the notes.
+                                <p className="text-[12px] font-mono text-[var(--nl-color-ink-disabled)] max-w-[280px] leading-relaxed mx-auto">
+                                  Open Noteleaf beside Zoom, Teams, Meet, or a room. Tap the mic — then be fully present.
                                 </p>
                               </div>
+                              <MeetingHowToStrip compact className="w-full max-w-2xl mx-0 mt-2" />
                             </div>
                           ) : (
                             <>
@@ -822,11 +763,7 @@ export function NotepadShell() {
 
                     {recordingError && (
                       <div role="alert" className="mx-5 mb-2 px-4 py-2.5 rounded-[var(--nl-radius-sm)] bg-[var(--nl-color-danger-subtle)] border border-red-200 text-[11px] font-mono text-[var(--nl-color-danger)] shrink-0">
-                        {recordingError === 'permission-denied'
-                          ? 'Microphone access denied. Allow it in browser settings.'
-                          : recordingError === 'not-supported'
-                          ? 'Speech recognition requires Chrome or Edge.'
-                          : 'Speech recognition error. Please try again.'}
+                        {recordingErrorCopy(recordingError)}
                       </div>
                     )}
 
@@ -848,6 +785,9 @@ export function NotepadShell() {
                           {activeNotes.length > 0
                             ? `${activeNotes.length} note${activeNotes.length !== 1 ? 's' : ''} captured`
                             : 'notes will appear as you speak'}
+                          {recordingStatus === 'recording' && autosaveStatus !== 'idle' && (
+                            <span className="ml-2">{autosaveCopy(autosaveStatus)}</span>
+                          )}
                         </p>
                       </div>
                       <RecordingTimer elapsedSeconds={elapsedSeconds} status={recordingStatus} />
@@ -855,6 +795,7 @@ export function NotepadShell() {
                   </div>
 
                   <SessionTranscriptPanel
+                    className="hidden lg:flex"
                     segments={activeTranscriptSegments}
                     liveTranscript={liveTranscript}
                     isRecording={isRecording}
@@ -867,7 +808,19 @@ export function NotepadShell() {
               {activeTab === 'transcript' && (
                 <div className="flex-1 overflow-y-auto px-8 py-6">
                   {activeTranscriptSegments.length === 0 && !activeTranscript ? (
-                    <p className="text-[13px] font-mono text-[var(--nl-color-ink-disabled)] italic text-center mt-16">No transcript yet. Record a session first.</p>
+                    <div className="flex flex-col items-center justify-center text-center mt-16 gap-2">
+                      <p className="font-serif text-[18px] text-[var(--nl-color-ink-tertiary)]">No transcript yet</p>
+                      <p className="text-[12px] font-mono text-[var(--nl-color-ink-disabled)] max-w-sm leading-relaxed">
+                        Start recording on the Notes tab. Your verbatim transcript with timestamps will appear here.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => handleTabSelect('notes')}
+                        className="mt-2 text-[12px] font-mono font-medium text-[var(--nl-color-accent-primary)] hover:underline"
+                      >
+                        Go to Notes →
+                      </button>
+                    </div>
                   ) : (
                     <div className="max-w-2xl mx-auto">
                       <h2 className="font-serif text-[18px] font-semibold mb-4 text-[var(--nl-color-ink-primary)]">Verbatim Transcript</h2>
@@ -900,13 +853,20 @@ export function NotepadShell() {
                         <p className="text-[12px] font-mono text-[var(--nl-color-ink-disabled)] max-w-sm mx-auto leading-relaxed">
                           Record a session first. When you stop, Noteleaf builds a recap with key takeaways and next steps.
                         </p>
+                        <button
+                          type="button"
+                          onClick={() => handleTabSelect('notes')}
+                          className="text-[12px] font-mono font-medium text-[var(--nl-color-accent-primary)] hover:underline"
+                        >
+                          Go to Notes →
+                        </button>
                       </div>
                     ) : aiState === 'idle' && hasSessionContent ? (
                       <>
                         <div className="text-center py-8 space-y-3">
                           <p className="font-serif text-[18px] text-[var(--nl-color-ink-tertiary)]">Recap not generated</p>
                           <p className="text-[12px] font-mono text-[var(--nl-color-ink-disabled)] max-w-sm mx-auto leading-relaxed">
-                            Generate an AI recap from your notes and transcript, or use Export in the header to share.
+                            Generate a recap from your notes and transcript, or use Export in the header to share.
                           </p>
                           <Button variant="secondary" size="sm" onClick={() => void generateAiNotes()}>
                             Generate recap
@@ -915,6 +875,18 @@ export function NotepadShell() {
                       </>
                     ) : (
                       <>
+                        {hasSessionContent && (
+                          <PostMeetingActions
+                            compact
+                            title={activeItem?.title ?? ''}
+                            notes={activeNotes}
+                            transcript={activeTranscript}
+                            transcriptSegments={activeTranscriptSegments}
+                            aiSummary={aiSummary}
+                            durationSeconds={displayDuration}
+                            onAskNotes={() => handleTabSelect('chat')}
+                          />
+                        )}
                         <AiSummaryCard
                           state={aiState}
                           summary={aiSummary}
@@ -949,7 +921,102 @@ export function NotepadShell() {
           </>
         )}
 
+        {recordingStatus !== 'idle' && activeTab !== 'notes' && (
+          <RecordingDock
+            recordingStatus={recordingStatus}
+            recordingError={recordingError}
+            sttWarning={sttWarning}
+            elapsedSeconds={elapsedSeconds}
+            noteCount={activeNotes.length}
+            onStart={startRecording}
+            onStop={handleStopRecording}
+            autosaveStatus={autosaveStatus}
+          />
+        )}
+
       </div>
+    </div>
+  );
+}
+
+function autosaveCopy(status: AutosaveStatus): string {
+  if (status === 'saving') return 'Saving…';
+  if (status === 'saved') return 'Saved';
+  if (status === 'error') return 'Couldn’t save — will retry';
+  return '';
+}
+
+function MenuIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+      <line x1="4" y1="7" x2="20" y2="7"/>
+      <line x1="4" y1="12" x2="20" y2="12"/>
+      <line x1="4" y1="17" x2="20" y2="17"/>
+    </svg>
+  );
+}
+
+function recordingErrorCopy(code: string | null): string {
+  if (code === 'permission-denied') return 'Microphone access denied. Allow it in browser settings.';
+  if (code === 'not-supported') return 'Speech recognition requires Chrome or Edge.';
+  if (code === 'session-create-failed') return 'Couldn’t start a session. Check your connection and try again.';
+  return 'Speech recognition error. Please try again.';
+}
+
+function RecordingDock({
+  recordingStatus,
+  recordingError,
+  sttWarning,
+  elapsedSeconds,
+  noteCount,
+  onStart,
+  onStop,
+  autosaveStatus,
+}: {
+  recordingStatus: RecordingStatus;
+  recordingError: string | null;
+  sttWarning: string | null;
+  elapsedSeconds: number;
+  noteCount: number;
+  onStart: () => void;
+  onStop: () => Promise<void>;
+  autosaveStatus: AutosaveStatus;
+}) {
+  return (
+    <div className="shrink-0">
+      {sttWarning && !recordingError && (
+        <div role="status" className="mx-5 mb-2 px-4 py-2.5 rounded-[var(--nl-radius-sm)] bg-amber-50 border border-amber-200 text-[11px] font-mono text-amber-800">
+          {sttWarning}
+        </div>
+      )}
+      {recordingError && (
+        <div role="alert" className="mx-5 mb-2 px-4 py-2.5 rounded-[var(--nl-radius-sm)] bg-[var(--nl-color-danger-subtle)] border border-red-200 text-[11px] font-mono text-[var(--nl-color-danger)]">
+          {recordingErrorCopy(recordingError)}
+        </div>
+      )}
+      <footer className="flex items-center gap-4 px-5 py-3 bg-[var(--nl-color-paper-raised)] border-t border-[var(--nl-border-subtle)]">
+        <MicButton status={recordingStatus} onStart={onStart} onStop={onStop} />
+        <div className="flex-1 min-w-0">
+          <p className="text-[13px] font-sans text-[var(--nl-color-ink-secondary)] truncate">
+            {recordingStatus === 'connecting'
+              ? 'Connecting…'
+              : recordingStatus === 'recording'
+              ? 'Still capturing — tap to stop'
+              : recordingStatus === 'stopping'
+              ? 'Saving session…'
+              : 'Something went wrong'}
+          </p>
+          <p className="text-[10px] font-mono text-[var(--nl-color-ink-disabled)] mt-0.5">
+            {noteCount > 0
+              ? `${noteCount} note${noteCount !== 1 ? 's' : ''} captured`
+              : 'notes will appear as you speak'}
+            {recordingStatus === 'recording' && autosaveStatus !== 'idle' && (
+              <span className="ml-2">{autosaveCopy(autosaveStatus)}</span>
+            )}
+          </p>
+        </div>
+        <RecordingTimer elapsedSeconds={elapsedSeconds} status={recordingStatus} />
+      </footer>
     </div>
   );
 }

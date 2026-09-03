@@ -35,15 +35,6 @@ function Bullet({ text }: { text: string }) {
   );
 }
 
-function ActionItem({ text }: { text: string }) {
-  return (
-    <label className="flex items-start gap-2.5 cursor-pointer group">
-      <span className="mt-[3px] w-4 h-4 shrink-0 rounded border border-[var(--nl-border-default)] group-hover:border-[var(--nl-color-accent-primary)] flex items-center justify-center transition-colors" aria-hidden="true" />
-      <span className="text-[14px] font-sans leading-[1.6] text-[var(--nl-color-ink-primary)]">{text}</span>
-    </label>
-  );
-}
-
 export function AiSummaryCard({ state, summary, isEnhancing = false, onRetry, className }: AiSummaryCardProps) {
   return (
     <div
@@ -65,7 +56,7 @@ export function AiSummaryCard({ state, summary, isEnhancing = false, onRetry, cl
           <path d="M12 2L9.5 9.5 2 12l7.5 2.5L12 22l2.5-7.5L22 12l-7.5-2.5z"/>
         </svg>
         <span className="font-serif text-[15px] font-medium text-[var(--nl-color-ink-primary)]">
-          Meeting Recap
+          Recap
         </span>
         {state === 'success' && summary && (
           <time className="ml-auto text-[10px] font-mono text-[var(--nl-color-ink-disabled)]">
@@ -93,11 +84,11 @@ export function AiSummaryCard({ state, summary, isEnhancing = false, onRetry, cl
         </div>
       )}
 
-      {/* Error */}
+      {/* Error — keep any instant draft visible */}
       {state === 'error' && (
-        <div className="px-5 py-5 space-y-3">
+        <div className={cn('px-5 py-5 space-y-3', summary && 'border-b border-[var(--nl-border-subtle)]')}>
           <p className="text-[13px] font-sans text-[var(--nl-color-danger)]">
-            Couldn't generate the summary. Check your connection and try again.
+            Couldn't generate the AI recap. Check your connection and try again.
           </p>
           <button
             type="button"
@@ -113,8 +104,8 @@ export function AiSummaryCard({ state, summary, isEnhancing = false, onRetry, cl
         </div>
       )}
 
-      {/* Success (includes instant draft while AI enhances) */}
-      {state === 'success' && summary && (
+      {/* Success (includes instant draft while AI enhances, or after a failed enhance) */}
+      {(state === 'success' || state === 'error') && summary && (
         <div className="px-5 py-5 space-y-5">
           {isEnhancing && (
             <p className="text-[11px] font-mono text-[var(--nl-color-accent-primary)] flex items-center gap-2">
@@ -142,7 +133,7 @@ export function AiSummaryCard({ state, summary, isEnhancing = false, onRetry, cl
             <>
               <div className="border-t border-[var(--nl-border-default)] opacity-50" />
               <Section icon="→" title="Action items">
-                {summary.actionItems.map((a, i) => <ActionItem key={i} text={a} />)}
+                {summary.actionItems.map((a, i) => <Bullet key={i} text={a} />)}
               </Section>
             </>
           )}

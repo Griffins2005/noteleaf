@@ -157,17 +157,21 @@ export function extractTags(text: string): string[] {
  *
  * @param input - Finalized transcript segment with session context.
  * @param enableTagging - Whether to extract keyword tags (user preference).
+ * @param enableClassify - When false, every note is stored as a general note.
  * @returns A fully formed Note object.
  */
 export function buildNoteFromTranscript(
   input: ClassifierInput,
   enableTagging: boolean,
+  enableClassify = true,
 ): ClassifierOutput {
   const { transcript, sessionId, sessionOffsetSeconds } = input;
   const raw = transcript.trim();
 
-  let type = classifyTranscript(raw);
-  type = refineNoteType(raw, type);
+  let type: NoteType = 'summary';
+  if (enableClassify) {
+    type = refineNoteType(raw, classifyTranscript(raw));
+  }
 
   const content = formatHumanNote(raw, type);
   const tagSource = cleanSpeech(raw);

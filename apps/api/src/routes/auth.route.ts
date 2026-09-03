@@ -42,6 +42,7 @@ import {
   ACCESS_TOKEN_TTL_MS,
 } from '../lib/auth.js';
 import { logger } from '../logger.js';
+import { purgeExpiredSessionsForUser } from '../services/retention.service.js';
 import type { PrismaClient } from '@prisma/client';
 
 // Config
@@ -227,7 +228,7 @@ function buildEmailHtml(code: string): string {
       </p>
     </div>
     <div style="background:#f8fafc;padding:16px 32px;border-top:1px solid #e2e8f0;">
-      <p style="font-size:11px;color:#64748b;margin:0;">Noteleaf · Capture. Understand. Grow.</p>
+      <p style="font-size:11px;color:#64748b;margin:0;">Noteleaf · Be fully present and focus on the conversation.</p>
     </div>
   </div>
 </body>
@@ -616,13 +617,23 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
         data: { retentionDays: retentionDays ?? null },
       });
 
-      logger.info({ userId, retentionDays: updated.retentionDays }, 'Preferences updated');
+      let deletedExpired = 0;
+      if (updated.retentionDays) {
+        try {
+          deletedExpired = await purgeExpiredSessionsForUser(fastify.db, userId);
+        } catch (err) {
+          logger.error({ err, userId }, 'Retention purge after preference update failed');
+        }
+      }
+
+      logger.info({ userId, retentionDays: updated.retentionDays, deletedExpired }, 'Preferences updated');
 
       return {
         success: true,
         data: {
           id: updated.id,
           retentionDays: updated.retentionDays,
+          deletedExpired,
         },
         timestamp: new Date().toISOString(),
       };
@@ -666,6 +677,7 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
           email:          user.email,
           name:           user.name,
           avatar:         user.avatar,
+          retentionDays:  user.retentionDays,
           tokenExpiresAt: exp ? exp * 1000 : Date.now() + ACCESS_TOKEN_TTL_MS,
         },
         timestamp: new Date().toISOString(),

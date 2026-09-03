@@ -5,6 +5,8 @@
     "API_INTERNAL_URL",
     "NEXT_PUBLIC_APP_URL",
     "NEXT_PUBLIC_API_URL",
+    "GOOGLE_CLIENT_ID",
+    "NEXT_PUBLIC_GOOGLE_CLIENT_ID",
     "VERCEL",
     "VERCEL_URL"
   ],
@@ -17,6 +19,8 @@
         "API_INTERNAL_URL",
         "NEXT_PUBLIC_APP_URL",
         "NEXT_PUBLIC_API_URL",
+        "GOOGLE_CLIENT_ID",
+        "NEXT_PUBLIC_GOOGLE_CLIENT_ID",
         "VERCEL",
         "VERCEL_URL"
       ]

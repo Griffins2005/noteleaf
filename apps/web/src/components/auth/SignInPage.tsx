@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useAuthStore } from '@/store/auth.store';
+import { AuthProductIntro } from './AuthProductIntro';
+import { LeafMark } from './LeafMark';
 
 // ─── Google icon ──────────────────────────────────────────────────────────────
 
@@ -46,12 +48,10 @@ export function SignInPage() {
   const [devCode,   setDevCode]   = useState<string | null>(null);
   const codeRef = useRef<HTMLInputElement>(null);
 
-  // Redirect if already authenticated
   useEffect(() => {
     if (isInit && user) router.replace('/');
   }, [isInit, user, router]);
 
-  // Handle Google OAuth errors redirected back to /auth
   useEffect(() => {
     const urlError = searchParams.get('error');
     if (urlError === 'google_cancelled') {
@@ -61,36 +61,44 @@ export function SignInPage() {
     }
   }, [searchParams]);
 
-  // Focus code input when it appears
   useEffect(() => {
     if (step === 'sent') {
       setTimeout(() => codeRef.current?.focus(), 60);
     }
   }, [step]);
 
+  // Wake the API while they read the page so the Google callback is not a cold start.
+  useEffect(() => {
+    void fetch('/api/health', { credentials: 'include' }).catch(() => { /* warmup */ });
+  }, []);
+
   async function handleSendCode(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
     setSending(true);
 
-    const res = await fetch('/api/auth/email/send', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body:    JSON.stringify({ email }),
-    });
+    try {
+      const res = await fetch('/api/auth/email/send', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body:    JSON.stringify({ email }),
+      });
 
-    const json = (await res.json()) as ApiResp<{ sent: boolean; devCode?: string }>;
+      const json = (await res.json()) as ApiResp<{ sent: boolean; devCode?: string }>;
 
-    setSending(false);
+      if (!res.ok || !json.success) {
+        setError(json.error?.message ?? 'Failed to send code. Please try again.');
+        return;
+      }
 
-    if (!res.ok || !json.success) {
-      setError(json.error?.message ?? 'Failed to send code. Please try again.');
-      return;
+      setDevCode(json.data?.devCode ?? null);
+      setStep('sent');
+    } catch {
+      setError('Couldn’t reach the server. Check your connection and try again.');
+    } finally {
+      setSending(false);
     }
-
-    setDevCode(json.data?.devCode ?? null);
-    setStep('sent');
   }
 
   async function handleVerifyCode(e: React.FormEvent<HTMLFormElement>) {
@@ -98,224 +106,194 @@ export function SignInPage() {
     setError(null);
     setVerifying(true);
 
-    const res = await fetch('/api/auth/email/verify', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body:    JSON.stringify({ email, code }),
-    });
+    try {
+      const res = await fetch('/api/auth/email/verify', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body:    JSON.stringify({ email, code }),
+      });
 
-    const json = (await res.json()) as ApiResp<{
-      user: { id: string; email: string | null; name: string | null };
-      tokenExpiresAt: number;
-    }>;
+      const json = (await res.json()) as ApiResp<{
+        user: { id: string; email: string | null; name: string | null };
+        tokenExpiresAt: number;
+      }>;
 
-    setVerifying(false);
+      if (!res.ok || !json.success || !json.data) {
+        setError(json.error?.message ?? 'Incorrect code. Please try again.');
+        return;
+      }
 
-    if (!res.ok || !json.success || !json.data) {
-      setError(json.error?.message ?? 'Incorrect code. Please try again.');
-      return;
+      setAuth(json.data.user, json.data.tokenExpiresAt);
+      router.replace('/');
+    } catch {
+      setError('Couldn’t reach the server. Check your connection and try again.');
+    } finally {
+      setVerifying(false);
     }
-
-    setAuth(json.data.user, json.data.tokenExpiresAt);
-    router.replace('/');
   }
 
   function handleGoogleSignIn() {
-    // Full-page redirect — Google OAuth requires it.
     window.location.href = '/api/auth/google';
   }
 
   const isLoading = sending || verifying;
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-[var(--nl-color-paper-bg)] px-4">
+    <div className="min-h-screen flex flex-col lg:h-screen lg:grid lg:grid-cols-2 lg:overflow-hidden">
+      <AuthProductIntro className="order-2 lg:order-1" />
 
-      {/* Card */}
-      <div
-        className="w-full max-w-sm bg-[var(--nl-color-paper-base)] rounded-[var(--nl-radius-xl)]
-                   border border-[var(--nl-border-subtle)] shadow-[var(--nl-shadow-lg)] overflow-hidden"
-      >
-        {/* Header */}
-        <div className="bg-[var(--nl-sidebar-bg)] px-8 py-6 flex flex-col items-center gap-3">
+      <div className="order-1 lg:order-2 flex flex-col bg-[var(--nl-color-paper-sunken)] lg:h-full lg:overflow-y-auto">
+        <div className="flex-1 flex flex-col justify-center px-5 py-8 sm:px-10 lg:px-12 xl:px-16">
           <div
-            aria-hidden="true"
-            style={{
-              width: 52, height: 52, borderRadius: 15, flexShrink: 0,
-              background: 'linear-gradient(145deg, #1fa463 0%, #0d7a47 100%)',
-              boxShadow: '0 3px 14px rgba(13,122,71,0.5), inset 0 1px 0 rgba(255,255,255,0.2)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
+            className="w-full max-w-[420px] mx-auto rounded-[18px] border border-[var(--nl-border-default)]
+                       bg-[var(--nl-color-paper-raised)] px-6 py-8 sm:px-8 sm:py-9
+                       shadow-[0_12px_40px_rgba(30,58,95,0.10)]"
           >
-            <svg width="30" height="30" viewBox="0 0 30 30" fill="none" aria-hidden="true">
-              <path d="M15 27C15 27 6 20.5 6 13C6 8.58 10.03 5 15 5C19.97 5 24 8.58 24 13C24 20.5 15 27 15 27Z" fill="white" opacity="0.95"/>
-              <path d="M15 27L15 14" stroke="rgba(13,122,71,0.5)" strokeWidth="1.8" strokeLinecap="round"/>
-              <path d="M15 18L11 15.5" stroke="rgba(13,122,71,0.35)" strokeWidth="1.3" strokeLinecap="round"/>
-              <path d="M15 22L11 19.5" stroke="rgba(13,122,71,0.35)" strokeWidth="1.3" strokeLinecap="round"/>
-            </svg>
-          </div>
-          <div className="text-center">
-            <span
-              className="block text-lg font-bold tracking-tight text-[var(--nl-sidebar-text)]"
-              style={{ fontFamily: 'var(--nl-font-serif)', letterSpacing: '-0.2px' }}
-            >
-              Noteleaf
-            </span>
-            <p className="text-xs text-[var(--nl-sidebar-text-muted)] mt-0.5">
-              Focus on the conversation — not the notes
-            </p>
-          </div>
-        </div>
-
-        {/* Body */}
-        <div className="px-8 py-7 space-y-5">
-
-          <div>
-            <h1 className="text-base font-semibold text-[var(--nl-color-ink-primary)] leading-tight">
-              {step === 'sent' ? 'Check your email' : 'Sign in to Noteleaf'}
-            </h1>
-            <p className="text-xs text-[var(--nl-color-ink-tertiary)] mt-1 leading-relaxed">
-              {step === 'sent'
-                ? `We sent a 6-digit code to ${email}`
-                : 'AI captures meeting notes from your mic — on calls or in person. No bot joins your meeting.'}
-            </p>
-          </div>
-
-          {/* Error banner */}
-          {error && (
-            <div className="rounded-[var(--nl-radius-md)] bg-[var(--nl-color-danger-subtle)]
-                            border border-red-200 px-3 py-2.5">
-              <p className="text-xs text-[var(--nl-color-danger)] leading-relaxed">{error}</p>
-            </div>
-          )}
-
-          {/* Dev code hint */}
-          {devCode && (
-            <div className="rounded-[var(--nl-radius-md)] bg-amber-50 border border-amber-200 px-3 py-2.5">
-              <p className="text-xs text-amber-700 leading-relaxed">
-                Dev mode — your code is <strong className="font-mono tracking-widest">{devCode}</strong>
+            <div className="flex items-center gap-2.5 mb-6">
+              <LeafMark size={36} />
+              <p
+                className="font-serif text-[17px] font-bold leading-none text-[var(--nl-color-ink-primary)]"
+                style={{ letterSpacing: '-0.2px' }}
+              >
+                Noteleaf
               </p>
             </div>
-          )}
 
-          {step !== 'sent' ? (
-            <>
-              {/* Google sign-in */}
-              <button
-                type="button"
-                onClick={handleGoogleSignIn}
-                disabled={isLoading}
-                className="w-full flex items-center justify-center gap-2.5 h-10 rounded-[var(--nl-radius-md)]
-                           bg-white border border-[var(--nl-border-default)] text-xs font-medium
-                           text-[var(--nl-color-ink-primary)] transition-[background-color,border-color]
-                           duration-150 hover:bg-[var(--nl-color-paper-raised)] hover:border-[var(--nl-border-strong)]
-                           disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <GoogleIcon />
-                Continue with Google
-              </button>
+            <h2 className="text-[26px] sm:text-[28px] font-serif font-medium text-[var(--nl-color-ink-primary)] leading-[1.15]">
+              {step === 'sent' ? 'Check your email' : 'Sign in to start capturing'}
+            </h2>
+            {step === 'sent' && (
+              <p className="text-[13px] font-sans text-[var(--nl-color-ink-tertiary)] mt-2 leading-relaxed">
+                We sent a 6-digit code to {email}
+              </p>
+            )}
 
-              {/* Divider */}
-              <div className="flex items-center gap-3">
-                <div className="flex-1 h-px bg-[var(--nl-border-subtle)]" />
-                <span className="text-[10px] text-[var(--nl-color-ink-disabled)] uppercase tracking-wider">
-                  or
-                </span>
-                <div className="flex-1 h-px bg-[var(--nl-border-subtle)]" />
+            {error && (
+              <div className="mt-5 rounded-[var(--nl-radius-md)] bg-[var(--nl-color-danger-subtle)] border border-red-200 px-3 py-2.5">
+                <p className="text-xs text-[var(--nl-color-danger)] leading-relaxed">{error}</p>
               </div>
+            )}
 
-              {/* Email form */}
-              <form onSubmit={handleSendCode} className="space-y-3">
-                <input
-                  type="email"
-                  placeholder="your@email.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  disabled={isLoading}
-                  className="w-full h-10 px-3 rounded-[var(--nl-radius-md)] border border-[var(--nl-border-default)]
-                             bg-[var(--nl-color-paper-raised)] text-xs text-[var(--nl-color-ink-primary)]
-                             placeholder:text-[var(--nl-color-ink-disabled)] outline-none
-                             focus:border-[var(--nl-color-accent-primary)] focus:ring-2 focus:ring-blue-100
-                             transition-[border-color,box-shadow] duration-150 disabled:opacity-50"
-                  style={{ fontFamily: 'var(--nl-font-mono)' }}
-                />
-                <button
-                  type="submit"
-                  disabled={isLoading || !email}
-                  className="w-full h-10 rounded-[var(--nl-radius-md)] bg-[var(--nl-color-accent-primary)]
-                             text-white text-xs font-medium transition-[background-color,opacity] duration-150
-                             hover:bg-[var(--nl-color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {sending ? 'Sending…' : 'Continue with email'}
-                </button>
-              </form>
-            </>
-          ) : (
-            /* Code entry form */
-            <form onSubmit={handleVerifyCode} className="space-y-3">
-              <input
-                ref={codeRef}
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]{6}"
-                maxLength={6}
-                placeholder="000000"
-                value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                required
-                disabled={verifying}
-                className="w-full h-12 px-3 rounded-[var(--nl-radius-md)] border border-[var(--nl-border-default)]
-                           bg-[var(--nl-color-paper-raised)] text-center text-lg font-bold tracking-[0.35em]
-                           text-[var(--nl-color-ink-primary)] placeholder:text-[var(--nl-color-ink-disabled)]
-                           placeholder:tracking-widest outline-none focus:border-[var(--nl-color-accent-primary)]
-                           focus:ring-2 focus:ring-blue-100 transition-[border-color,box-shadow] duration-150
-                           disabled:opacity-50"
-                style={{ fontFamily: 'var(--nl-font-mono)' }}
-              />
-              <button
-                type="submit"
-                disabled={verifying || code.length < 6}
-                className="w-full h-10 rounded-[var(--nl-radius-md)] bg-[var(--nl-color-accent-primary)]
-                           text-white text-xs font-medium transition-[background-color,opacity] duration-150
-                           hover:bg-[var(--nl-color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {verifying ? 'Signing in…' : 'Sign in'}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setStep('idle'); setCode(''); setError(null); setDevCode(null); setSending(false); setVerifying(false); }}
-                className="w-full text-center text-xs text-[var(--nl-color-ink-tertiary)]
-                           hover:text-[var(--nl-color-ink-secondary)] transition-colors duration-150 py-1"
-              >
-                Use a different email
-              </button>
-            </form>
-          )}
+            {devCode && (
+              <div className="mt-5 rounded-[var(--nl-radius-md)] bg-amber-50 border border-amber-200 px-3 py-2.5">
+                <p className="text-xs text-amber-700 leading-relaxed">
+                  Dev mode — your code is <strong className="font-mono tracking-widest">{devCode}</strong>
+                </p>
+              </div>
+            )}
+
+            <div className="mt-7 space-y-4">
+              {step !== 'sent' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleGoogleSignIn}
+                    disabled={isLoading}
+                    className="w-full flex items-center justify-center gap-2.5 h-12 rounded-[10px]
+                               bg-white border border-[var(--nl-border-strong)] text-[14px] font-medium
+                               text-[var(--nl-color-ink-primary)] shadow-[var(--nl-shadow-sm)]
+                               transition-[background-color,border-color,box-shadow] duration-150
+                               hover:bg-[var(--nl-color-paper-base)] hover:border-[var(--nl-color-ink-tertiary)]
+                               disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <GoogleIcon />
+                    Continue with Google
+                  </button>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-px bg-[var(--nl-border-default)]" />
+                    <span className="text-[10px] text-[var(--nl-color-ink-disabled)] uppercase tracking-wider">
+                      or
+                    </span>
+                    <div className="flex-1 h-px bg-[var(--nl-border-default)]" />
+                  </div>
+
+                  <form onSubmit={handleSendCode} className="space-y-3">
+                    <label className="block">
+                      <span className="sr-only">Email address</span>
+                      <input
+                        type="email"
+                        placeholder="your@email.com"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        required
+                        disabled={isLoading}
+                        className="w-full h-12 px-3.5 rounded-[10px] border border-[var(--nl-border-default)]
+                                   bg-white text-[14px] text-[var(--nl-color-ink-primary)]
+                                   placeholder:text-[var(--nl-color-ink-disabled)] outline-none
+                                   focus:border-[var(--nl-color-accent-primary)] focus:ring-2 focus:ring-[var(--nl-color-accent-subtle)]
+                                   transition-[border-color,box-shadow] duration-150 disabled:opacity-50"
+                        style={{ fontFamily: 'var(--nl-font-mono)' }}
+                      />
+                    </label>
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="w-full h-12 rounded-[10px] bg-[var(--nl-color-accent-primary)]
+                                 text-white text-[14px] font-medium transition-[background-color,opacity] duration-150
+                                 hover:bg-[var(--nl-color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {sending ? 'Sending…' : 'Continue with email'}
+                    </button>
+                  </form>
+                </>
+              ) : (
+                <form onSubmit={handleVerifyCode} className="space-y-3">
+                  <label className="block">
+                    <span className="sr-only">6-digit sign-in code</span>
+                  <input
+                    ref={codeRef}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]{6}"
+                    maxLength={6}
+                    placeholder="000000"
+                    autoComplete="one-time-code"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    required
+                    disabled={verifying}
+                    className="w-full px-3 rounded-[10px] border border-[var(--nl-border-default)]
+                               bg-white text-center text-lg font-bold tracking-[0.35em]
+                               text-[var(--nl-color-ink-primary)] placeholder:text-[var(--nl-color-ink-disabled)]
+                               placeholder:tracking-widest outline-none focus:border-[var(--nl-color-accent-primary)]
+                               focus:ring-2 focus:ring-[var(--nl-color-accent-subtle)]
+                               transition-[border-color,box-shadow] duration-150 disabled:opacity-50"
+                    style={{ fontFamily: 'var(--nl-font-mono)', height: 52 }}
+                  />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={verifying || code.length < 6}
+                    className="w-full h-12 rounded-[10px] bg-[var(--nl-color-accent-primary)]
+                               text-white text-[14px] font-medium transition-[background-color,opacity] duration-150
+                               hover:bg-[var(--nl-color-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {verifying ? 'Signing in…' : 'Sign in'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setStep('idle'); setCode(''); setError(null); setDevCode(null); setSending(false); setVerifying(false); }}
+                    className="w-full text-center text-xs text-[var(--nl-color-ink-tertiary)]
+                               hover:text-[var(--nl-color-ink-secondary)] transition-colors duration-150 py-1"
+                  >
+                    Use a different email
+                  </button>
+                </form>
+              )}
+            </div>
+
+            <p className="mt-7 text-[11px] font-mono text-[var(--nl-color-ink-disabled)] leading-relaxed">
+              Audio is transcribed on this device and never stored. Your notes are private and never sold.
+              By signing in you agree to our{' '}
+              <Link href="/terms" className="underline hover:text-[var(--nl-color-ink-tertiary)] transition-colors">
+                Terms &amp; Privacy Policy
+              </Link>
+              .
+            </p>
+          </div>
         </div>
-
-        {/* Footer */}
-        <div className="px-8 py-4 border-t border-[var(--nl-border-subtle)] bg-[var(--nl-color-paper-raised)]">
-          <p className="text-[10px] text-[var(--nl-color-ink-disabled)] text-center leading-relaxed">
-            By signing in you agree to our{' '}
-            <Link href="/terms" className="underline hover:text-[var(--nl-color-ink-tertiary)] transition-colors">
-              Terms &amp; Privacy Policy
-            </Link>
-            . Your notes are private and never sold.
-          </p>
-        </div>
-      </div>
-
-      {/* Tagline below card */}
-      <div className="mt-6 text-center max-w-sm space-y-3">
-        <p className="text-xs text-[var(--nl-color-ink-disabled)] leading-relaxed">
-          Ambient AI notetaker — listens through your mic, never joins as a participant.
-        </p>
-        <ul className="text-[10px] font-mono text-[var(--nl-color-ink-disabled)] space-y-1.5 text-left inline-block">
-          <li>· Works beside Zoom, Teams, Meet, or in person</li>
-          <li>· Live transcription with visible “active” indicator</li>
-          <li>· Recap, key takeaways, and post-meeting workflows</li>
-        </ul>
       </div>
     </div>
   );

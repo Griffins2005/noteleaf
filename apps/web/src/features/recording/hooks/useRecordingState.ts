@@ -7,7 +7,10 @@ import { useSessionStore } from '@/store/session.store';
 import { useUserStore } from '@/store/user.store';
 import { useAuthStore } from '@/store/auth.store';
 import { sessionsApi } from '@/features/sessions/sessions.api';
+import { persistRecordingSnapshot } from '@/features/recording/persistRecordingSnapshot';
 import type { TranscriptSegment } from '@noteleaf/shared-types';
+
+export type AutosaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -23,6 +26,8 @@ export interface UseRecordingStateReturn {
   sttWarning: string | null;
   startRecording: () => Promise<void>;
   stopRecording:  () => Promise<void>;
+  /** Mid-session persist to the server — notes/transcript save as you talk. */
+  autosaveStatus: AutosaveStatus;
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
@@ -34,14 +39,21 @@ export function useRecordingState(): UseRecordingStateReturn {
   const [sttWarning, setSttWarning]           = useState<string | null>(null);
 
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [autosaveStatus, setAutosaveStatus] = useState<AutosaveStatus>('idle');
   const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const elapsedRef = useRef(0);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistInFlightRef = useRef(false);
+  const persistQueuedRef = useRef(false);
+  const recordingSessionIdRef = useRef<string | null>(null);
+  const isRecordingRef = useRef(false);
 
   // ── Stores ─────────────────────────────────────────────────────────────
 
   const {
     activeSessionId,
     createSession,
+    removeSession,
     appendNote,
     appendTranscript,
     appendTranscriptSegment,
@@ -53,9 +65,10 @@ export function useRecordingState(): UseRecordingStateReturn {
   // ── Note classifier ────────────────────────────────────────────────────
 
   const { processTranscriptSegment } = useNoteClassifier({
-    sessionId:     activeSessionId ?? '',
-    enableTagging: preferences.autoTagKeywords,
-    onNoteCreated: (note) => appendNote(note),
+    sessionId:      activeSessionId ?? '',
+    enableTagging:  preferences.autoTagKeywords,
+    enableClassify: preferences.autoClassify,
+    onNoteCreated:  (note) => appendNote(note),
   });
 
   // ── Speech recognition ─────────────────────────────────────────────────
@@ -127,10 +140,113 @@ export function useRecordingState(): UseRecordingStateReturn {
 
   useEffect(() => () => stopTimer(), []);
 
+  const readSnapshot = useCallback((status: 'recording' | 'stopped') => {
+    const {
+      activeSessionId: sessionId,
+      activeNotes,
+      activeTranscript,
+      activeTranscriptSegments,
+    } = useSessionStore.getState();
+    const id = recordingSessionIdRef.current ?? sessionId;
+    if (!id) return null;
+    return {
+      sessionId: id,
+      notes: activeNotes,
+      transcript: activeTranscript,
+      transcriptSegments: activeTranscriptSegments,
+      durationSeconds: elapsedRef.current,
+      status,
+    };
+  }, []);
+
+  const flushPersist = useCallback(async (status: 'recording' | 'stopped' = 'recording') => {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+
+    if (status === 'recording' && !isRecordingRef.current) return;
+
+    const snapshot = readSnapshot(status);
+    if (!snapshot) return;
+
+    if (persistInFlightRef.current) {
+      persistQueuedRef.current = status === 'recording' && isRecordingRef.current;
+      return;
+    }
+
+    persistInFlightRef.current = true;
+    setAutosaveStatus('saving');
+    try {
+      await persistRecordingSnapshot(snapshot);
+      setAutosaveStatus('saved');
+    } catch (err) {
+      console.error('[Session] Autosave failed:', err);
+      setAutosaveStatus('error');
+    } finally {
+      persistInFlightRef.current = false;
+      if (persistQueuedRef.current) {
+        persistQueuedRef.current = false;
+        void flushPersist(status);
+      }
+    }
+  }, [readSnapshot]);
+
+  const schedulePersist = useCallback(() => {
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => {
+      void flushPersist('recording');
+    }, 4000);
+  }, [flushPersist]);
+
+  useEffect(() => {
+    if (recordingStatus !== 'recording') {
+      isRecordingRef.current = false;
+      return;
+    }
+
+    isRecordingRef.current = true;
+
+    const unsub = useSessionStore.subscribe((state, prev) => {
+      if (
+        state.activeNotes !== prev.activeNotes ||
+        state.activeTranscript !== prev.activeTranscript ||
+        state.activeTranscriptSegments !== prev.activeTranscriptSegments
+      ) {
+        schedulePersist();
+      }
+    });
+
+    const heartbeat = setInterval(() => {
+      void flushPersist('recording');
+    }, 15_000);
+
+    const saveOnLeave = () => {
+      if (!isRecordingRef.current) return;
+      const snapshot = readSnapshot('recording');
+      if (!snapshot) return;
+      void persistRecordingSnapshot(snapshot, { keepalive: true });
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') saveOnLeave();
+    };
+
+    window.addEventListener('pagehide', saveOnLeave);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      unsub();
+      clearInterval(heartbeat);
+      window.removeEventListener('pagehide', saveOnLeave);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [recordingStatus, flushPersist, schedulePersist, readSnapshot]);
+
   // ── Start recording ────────────────────────────────────────────────────
 
   const startRecording = useCallback(async (): Promise<void> => {
-    if (recordingStatus !== 'idle') return;
+    if (recordingStatus !== 'idle' && recordingStatus !== 'error') return;
 
     if (!isSupported) {
       setError('not-supported');
@@ -149,18 +265,34 @@ export function useRecordingState(): UseRecordingStateReturn {
         await sessionsApi.create({ id: sessionId, title: '' });
       } catch (err) {
         console.error('[Session] Failed to create session before recording:', err);
+        removeSession(sessionId);
+        setError('session-create-failed');
         setRecordingStatus('error');
         return;
       }
     }
 
-    startSTT(resolveSpeechLanguage());
+    recordingSessionIdRef.current = sessionId;
+    startSTT(preferences.speechLanguage || resolveSpeechLanguage());
     setRecordingStatus('recording');
     startTimer();
+    setAutosaveStatus('idle');
+    void persistRecordingSnapshot({
+      sessionId,
+      notes: useSessionStore.getState().activeNotes,
+      transcript: useSessionStore.getState().activeTranscript,
+      transcriptSegments: useSessionStore.getState().activeTranscriptSegments,
+      durationSeconds: 0,
+      status: 'recording',
+    }).catch((err) => {
+      console.error('[Session] Failed to mark session recording:', err);
+    });
   }, [
     activeSessionId,
     createSession,
+    removeSession,
     isSupported,
+    preferences.speechLanguage,
     recordingStatus,
     startSTT,
     userId,
@@ -173,9 +305,21 @@ export function useRecordingState(): UseRecordingStateReturn {
 
     setRecordingStatus('stopping');
     setLiveTranscript('');
+    isRecordingRef.current = false;
     stopTimer();
 
     await stopSTT();
+
+    persistQueuedRef.current = false;
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+
+    const waitUntil = Date.now() + 3000;
+    while (persistInFlightRef.current && Date.now() < waitUntil) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
 
     const {
       activeSessionId: stoppedSessionId,
@@ -185,24 +329,40 @@ export function useRecordingState(): UseRecordingStateReturn {
       sessions: stoppedSessions,
     } = useSessionStore.getState();
 
-    if (stoppedSessionId) {
-      const stoppedTitle = stoppedSessions.find((s) => s.id === stoppedSessionId)?.title ?? '';
+    const sessionId = recordingSessionIdRef.current ?? stoppedSessionId;
+    if (sessionId) {
+      const stoppedTitle = stoppedSessions.find((s) => s.id === sessionId)?.title ?? '';
       try {
-        await sessionsApi.update(stoppedSessionId, {
-          title: stoppedTitle,
+        await persistRecordingSnapshot({
+          sessionId,
           notes: stoppedNotes,
           transcript: stoppedTranscript,
           transcriptSegments: stoppedTranscriptSegments,
           durationSeconds: elapsedRef.current,
           status: 'stopped',
         });
+        if (stoppedTitle) {
+          await sessionsApi.update(sessionId, { title: stoppedTitle }).catch(() => { /* title is non-fatal */ });
+        }
+        setAutosaveStatus('saved');
       } catch (err) {
         console.error('[Session] Failed to persist session to API:', err);
+        setAutosaveStatus('error');
       }
     }
 
+    recordingSessionIdRef.current = null;
     setRecordingStatus('idle');
   }, [recordingStatus, stopSTT]);
 
-  return { recordingStatus, liveTranscript, elapsedSeconds, error, sttWarning, startRecording, stopRecording };
+  return {
+    recordingStatus,
+    liveTranscript,
+    elapsedSeconds,
+    error,
+    sttWarning,
+    startRecording,
+    stopRecording,
+    autosaveStatus,
+  };
 }

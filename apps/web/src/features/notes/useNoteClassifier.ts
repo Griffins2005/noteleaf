@@ -43,6 +43,12 @@ export interface UseNoteClassifierOptions {
   enableTagging: boolean;
 
   /**
+   * Whether to classify notes as action / decision / insight.
+   * Controlled by the user's autoClassify preference. Default: true.
+   */
+  enableClassify?: boolean;
+
+  /**
    * Called when a new note has been classified and is ready for storage.
    * The caller (typically useRecordingState or a Zustand action) is
    * responsible for persisting the note.
@@ -84,7 +90,7 @@ const MIN_CONFIDENCE = 0.5;
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useNoteClassifier(options: UseNoteClassifierOptions): UseNoteClassifierReturn {
-  const { sessionId, enableTagging, onNoteCreated } = options;
+  const { sessionId, enableTagging, enableClassify = true, onNoteCreated } = options;
 
   const processTranscriptSegment = useCallback(
     (text: string, sessionOffsetSeconds: number, confidence: number, sessionIdOverride?: string): void => {
@@ -98,11 +104,12 @@ export function useNoteClassifier(options: UseNoteClassifierOptions): UseNoteCla
       const note = buildNoteFromTranscript(
         { transcript: text.trim(), sessionId: targetSessionId, sessionOffsetSeconds },
         enableTagging,
+        enableClassify,
       );
 
       onNoteCreated(note);
     },
-    [sessionId, enableTagging, onNoteCreated],
+    [sessionId, enableTagging, enableClassify, onNoteCreated],
   );
 
   return { processTranscriptSegment };

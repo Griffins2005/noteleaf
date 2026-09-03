@@ -24,12 +24,6 @@ export function PostMeetingActions({
 
   const exportPayload: ExportInput = exportInput;
 
-  async function withFeedback(label: string, action: () => void | Promise<void>) {
-    await action();
-    setFeedback(label);
-    setTimeout(() => setFeedback(null), 2200);
-  }
-
   async function handleCopyRecap() {
     const text = exportFormatter.toRecapPlainText(exportPayload);
     const ok = await exportFormatter.copyToClipboard(text);
@@ -132,7 +126,7 @@ export function PostMeetingActions({
           <button
             key={action.id}
             type="button"
-            onClick={() => void withFeedback(action.label, action.onClick)}
+            onClick={action.onClick}
             className={cn(
               'text-left px-3 py-2.5 rounded-[var(--nl-radius-md)]',
               'bg-[var(--nl-color-paper-base)] border border-[var(--nl-border-subtle)]',

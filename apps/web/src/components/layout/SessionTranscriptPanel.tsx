@@ -9,6 +9,7 @@ interface SessionTranscriptPanelProps {
   liveTranscript: string;
   isRecording: boolean;
   elapsedSeconds: number;
+  className?: string;
 }
 
 function formatOffset(totalSeconds: number): string {
@@ -23,6 +24,7 @@ export function SessionTranscriptPanel({
   liveTranscript,
   isRecording,
   elapsedSeconds,
+  className,
 }: SessionTranscriptPanelProps) {
   const [query, setQuery] = useState('');
   const liveRef = useRef<HTMLDivElement>(null);
@@ -42,9 +44,10 @@ export function SessionTranscriptPanel({
 
   return (
     <aside className={cn(
-      'w-[268px] shrink-0 flex flex-col',
+      'w-[268px] shrink-0 flex-col',
       'bg-[var(--nl-color-paper-raised)]',
       'border-l border-[var(--nl-border-subtle)]',
+      className,
     )}>
       {/* Header + search */}
       <div className="px-3 py-3 border-b border-[var(--nl-border-subtle)] shrink-0 space-y-2">
@@ -67,6 +70,7 @@ export function SessionTranscriptPanel({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search transcript…"
+            aria-label="Search transcript"
             className={cn(
               'w-full pl-7 pr-3 py-1.5 rounded-[6px]',
               'text-[11px] font-sans text-[var(--nl-color-ink-primary)]',
@@ -98,15 +102,6 @@ export function SessionTranscriptPanel({
                 key={segment.id}
                 className="flex gap-3 px-3 py-2.5 hover:bg-[var(--nl-color-paper-sunken)] transition-colors"
               >
-                <button
-                  type="button"
-                  className="shrink-0 mt-0.5 text-[var(--nl-color-ink-disabled)] hover:text-[var(--nl-color-accent-primary)] transition-colors"
-                  aria-label={`Play from ${formatOffset(segment.startOffsetSeconds)}`}
-                >
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                    <polygon points="5,3 19,12 5,21"/>
-                  </svg>
-                </button>
                 <div className="min-w-0">
                   <span className="text-[10px] font-mono text-[var(--nl-color-ink-tertiary)] block mb-0.5">
                     {formatOffset(segment.startOffsetSeconds)}

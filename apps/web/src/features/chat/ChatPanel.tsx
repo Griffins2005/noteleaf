@@ -198,8 +198,8 @@ export function ChatPanel({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
-  async function handleSend() {
-    const q = input.trim();
+  async function handleSend(override?: string) {
+    const q = (override ?? input).trim();
     if (!q || loading || !hasContext || !sessionId) return;
 
     const userMsg: ChatMessage = {
@@ -301,12 +301,12 @@ export function ChatPanel({
         </div>
         <div className="max-w-sm">
           <p className="font-serif text-[17px] text-[var(--nl-color-ink-primary)] mb-2">
-            {isRecording ? 'Listening…' : 'No notes to chat with yet'}
+            {isRecording ? 'Listening…' : 'Nothing to ask about yet'}
           </p>
           <p className="text-[12px] font-sans text-[var(--nl-color-ink-tertiary)] leading-relaxed mx-auto">
             {isRecording
               ? 'Start speaking — context appears here within a few seconds. You can ask questions while the meeting continues.'
-              : 'Record a session first. Once speech is captured, come back here to ask questions.'}
+              : 'Start recording on the Notes tab. You can ask questions here once speech is captured.'}
           </p>
         </div>
       </div>
@@ -365,7 +365,7 @@ export function ChatPanel({
                 <button
                   key={q}
                   type="button"
-                  onClick={() => { setInput(q); inputRef.current?.focus(); }}
+                  onClick={() => { void handleSend(q); }}
                   disabled={loading}
                   className={cn(
                     'text-left px-3.5 py-2 rounded-[var(--nl-radius-md)]',
@@ -425,7 +425,7 @@ export function ChatPanel({
                 <button
                   key={q}
                   type="button"
-                  onClick={() => { setInput(q); inputRef.current?.focus(); }}
+                  onClick={() => { void handleSend(q); }}
                   disabled={loading}
                   className={cn(
                     'text-left px-3.5 py-2 rounded-[var(--nl-radius-md)]',

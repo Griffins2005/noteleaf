@@ -17,6 +17,7 @@ import { healthRoute } from './routes/health.route.js';
 import { identityRoute } from './routes/identity.route.js';
 import { chatRoute } from './routes/chat.route.js';
 import { authRoute } from './routes/auth.route.js';
+import { purgeExpiredSessions } from './services/retention.service.js';
 
 /** Creates and configures the Fastify app. Does not start listening. */
 export async function buildApp(opts: { disableRateLimit?: boolean } = {}): Promise<ReturnType<typeof Fastify>> {
@@ -130,9 +131,28 @@ const host = '0.0.0.0';
 
 const app = await buildApp();
 
+const RETENTION_SWEEP_MS = 24 * 60 * 60 * 1000;
+
+function scheduleRetentionSweep(): void {
+  const sweep = () => {
+    void purgeExpiredSessions(app.db)
+      .then((result) => {
+        if (result.deleted > 0) {
+          logger.info(result, 'Retention sweep deleted expired sessions');
+        }
+      })
+      .catch((err: unknown) => {
+        logger.error({ err }, 'Retention sweep failed');
+      });
+  };
+  setTimeout(sweep, 15_000);
+  setInterval(sweep, RETENTION_SWEEP_MS);
+}
+
 try {
   await app.listen({ port, host });
   logger.info({ port, host }, `Noteleaf API listening`);
+  scheduleRetentionSweep();
 } catch (err) {
   logger.error({ err }, 'Failed to start server');
   process.exit(1);

@@ -14,7 +14,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     }
   }, [user, isInitialized, router]);
 
-  if (!isInitialized) {
+  if (!isInitialized || !user) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-[var(--nl-color-paper-bg)]">
         <div
@@ -26,8 +26,6 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-
-  if (!user) return null;
 
   return <>{children}</>;
 }

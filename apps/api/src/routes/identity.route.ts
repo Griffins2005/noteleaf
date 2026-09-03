@@ -89,7 +89,7 @@ function buildEmailHtml(code: string): string {
     </div>
     <div style="background:#f4f0e8;padding:16px 32px;border-top:1px solid #e8e0d5;">
       <p style="font-size:11px;color:#8c7560;margin:0;">
-        Sent by Noteleaf · Capture. Understand. Grow.
+        Sent by Noteleaf · Be fully present and focus on the conversation.
       </p>
     </div>
   </div>

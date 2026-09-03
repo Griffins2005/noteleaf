@@ -177,7 +177,7 @@ export function NoteCard({ note, variant = 'document', onUpdate, className }: No
               type="button"
               onClick={startEdit}
               aria-label="Edit note"
-              className="absolute right-0 top-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-[var(--nl-color-ink-disabled)] hover:text-[var(--nl-color-ink-secondary)]"
+              className="absolute right-0 top-3.5 opacity-70 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity text-[var(--nl-color-ink-disabled)] hover:text-[var(--nl-color-ink-secondary)]"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>

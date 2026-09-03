@@ -4,6 +4,7 @@
 // A proactive refresh fires 60 seconds before the access token expires.
 
 import { create } from 'zustand';
+import { useUserStore } from './user.store';
 
 export interface AuthUser {
   id:     string;
@@ -50,12 +51,15 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
           success: boolean;
           data?: {
             id: string; email: string | null; name: string | null;
-            avatar?: string | null; tokenExpiresAt: number;
+            avatar?: string | null; retentionDays?: number | null; tokenExpiresAt: number;
           };
         };
 
         if (json.success && json.data) {
-          const { tokenExpiresAt, ...user } = json.data;
+          const { tokenExpiresAt, retentionDays, ...user } = json.data;
+          if (retentionDays !== undefined) {
+            useUserStore.getState().setPreference('retentionDays', retentionDays);
+          }
           set({ user, tokenExpiresAt, isInitialized: true });
           scheduleProactiveRefresh(tokenExpiresAt, get().refreshAccessToken);
           return;

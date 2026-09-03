@@ -264,6 +264,8 @@ Markdown docs are **not** deployed. What ships when you push `main`:
 
 **Render dashboard** (required secrets from `.env.production`): `DATABASE_URL`, `DIRECT_DATABASE_URL`, `JWT_SECRET`, `NVIDIA_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, plus `APP_URL` / `ALLOWED_ORIGINS` = `https://noteleaf.vercel.app` (already in `render.yaml` if you use Blueprint).
 
+**Vercel dashboard:** also set `GOOGLE_CLIENT_ID` (same public value as Render — not the secret). That lets “Continue with Google” jump straight to Google’s account picker instead of waiting for the API to boot.
+
 **Google OAuth redirect URI:** `https://noteleaf.vercel.app/api/auth/google/callback`
 
 ```bash
@@ -272,7 +274,7 @@ npm run db:migrate:prod
 curl -s https://noteleaf.vercel.app/api/health
 ```
 
-**Troubleshooting:** 508 loop → `API_INTERNAL_URL` must be Render, not Vercel. `redirect_uri_mismatch` → set Render `APP_URL` to Vercel URL and redeploy API.
+**Troubleshooting:** 508 loop → `API_INTERNAL_URL` must be Render, not Vercel. `redirect_uri_mismatch` → set Render `APP_URL` to Vercel URL and redeploy API. Google still shows a Render boot screen → add `GOOGLE_CLIENT_ID` on Vercel and redeploy the web app.
 
 **Local Docker:**
 

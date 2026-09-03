@@ -49,7 +49,7 @@ export const MEETING_PHASES: {
   {
     id: 'during',
     label: 'During',
-    hint: 'Focus on the discussion. Transcription runs live on your device — switch to Ask notes anytime for mid-meeting questions.',
+    hint: 'Be fully present. Transcription runs live on your device — switch to Ask notes anytime for mid-meeting questions.',
     actions: [{ id: 'open-ask-notes', label: 'Ask during meeting' }],
   },
   {

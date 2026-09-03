@@ -11,6 +11,6 @@ export default defineConfig({
     environment: 'node',
     globals: false,
     passWithNoTests: true,
-    include: ['smoke-tests/**/*.{test,spec}.ts'],
+    include: ['src/**/*.test.ts', 'smoke-tests/**/*.{test,spec}.ts'],
   },
 });

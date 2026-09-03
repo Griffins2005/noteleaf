@@ -30,7 +30,7 @@ export const metadata: Metadata = {
     template: '%s — Noteleaf',
     default: 'Noteleaf',
   },
-  description: 'Capture. Understand. Grow. Ambient AI notetaker that listens, classifies, and summarises your meetings.',
+  description: 'Be fully present and focus on the conversation. Ambient AI notetaker that listens through your mic — no bot joins your meeting.',
   keywords: ['meeting notes', 'speech to text', 'AI notetaker', 'local', 'ambient'],
   icons: {
     icon: '/logo.png',

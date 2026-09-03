@@ -1,11 +1,12 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { LeafMark } from '@/components/auth/LeafMark';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-4">
-      <h2 className="text-[11px] font-mono font-semibold uppercase tracking-[2px] text-[#64748b] pt-2 border-t border-[#e2e8f0]">
+      <h2 className="text-[11px] font-mono font-semibold uppercase tracking-[2px] text-[var(--nl-color-ink-disabled)] pt-2 border-t border-[var(--nl-border-subtle)]">
         {title}
       </h2>
       <div className="space-y-3">{children}</div>
@@ -16,8 +17,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Rule({ heading, body }: { heading: string; body: string }) {
   return (
     <div>
-      <p className="text-[13px] font-medium text-[#0f172a] mb-0.5">{heading}</p>
-      <p className="text-[13px] text-[#475569] leading-relaxed">{body}</p>
+      <p className="text-[13px] font-sans font-medium text-[var(--nl-color-ink-primary)] mb-0.5">{heading}</p>
+      <p className="text-[13px] font-sans text-[var(--nl-color-ink-tertiary)] leading-relaxed">{body}</p>
     </div>
   );
 }
@@ -27,25 +28,35 @@ export default function TermsPage() {
   const updated = 'May 28, 2026';
 
   return (
-    <div className="min-h-screen bg-[#f8fafc]" style={{ fontFamily: 'var(--nl-font-mono, "DM Mono", monospace)' }}>
+    <div className="min-h-screen bg-[var(--nl-color-paper-bg)]">
 
-      <div className="bg-[#0f172a] px-4 py-3 flex items-center gap-3">
+      <div className="bg-[var(--nl-sidebar-bg)] px-4 py-3 flex items-center gap-3">
         <button
           type="button"
-          onClick={() => router.back()}
-          aria-label="Go back"
-          className="w-9 h-9 flex items-center justify-center rounded-[10px] text-[#94a3b8] hover:text-[#f8fafc] hover:bg-white/10 transition-colors shrink-0"
+          onClick={() => router.push('/')}
+          aria-label="Back to Noteleaf"
+          className="w-9 h-9 flex items-center justify-center rounded-[10px] text-[var(--nl-sidebar-text-muted)] hover:text-[var(--nl-sidebar-text)] hover:bg-white/10 transition-colors shrink-0"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
-        <span className="text-[15px] font-semibold tracking-tight text-[#f8fafc] flex-1">Terms &amp; Privacy</span>
-        <span className="text-[11px] text-[#94a3b8]">Last updated {updated}</span>
+        <LeafMark size={28} />
+        <span className="font-serif text-[16px] font-bold tracking-tight text-[var(--nl-sidebar-text)] flex-1">
+          Terms &amp; Privacy
+        </span>
+        <span className="text-[11px] font-mono text-[var(--nl-sidebar-text-muted)] hidden sm:inline">
+          Last updated {updated}
+        </span>
       </div>
 
       <div className="max-w-2xl mx-auto px-6 py-12 space-y-10">
 
         <div>
-          <h1 className="text-[22px] font-bold text-[#0f172a] mb-2">Terms &amp; Privacy</h1>
+          <h1 className="font-serif text-[26px] font-medium text-[var(--nl-color-ink-primary)] mb-2">
+            Terms &amp; Privacy
+          </h1>
+          <p className="text-[13px] font-sans text-[var(--nl-color-ink-tertiary)] leading-relaxed">
+            Your notes are private. Audio stays on this device. Nothing is sold.
+          </p>
         </div>
 
         <Section title="Terms of Service">
@@ -86,7 +97,7 @@ export default function TermsPage() {
           />
           <Rule
             heading="Retention"
-            body="Your sessions stay until you delete them or close your account. You can set auto-delete after 30 days in Settings."
+            body="Your sessions stay until you delete them or close your account. In Settings you can auto-delete after 7, 30, or 90 days, or keep them forever. Expired sessions are removed when you open Noteleaf and once a day on the server."
           />
           <Rule
             heading="Your rights"
@@ -102,8 +113,10 @@ export default function TermsPage() {
           />
         </Section>
 
-        <div className="pt-6 border-t border-[#e2e8f0]">
-          <p className="text-[11px] text-[#94a3b8]">Noteleaf · Capture. Understand. Grow.</p>
+        <div className="pt-6 border-t border-[var(--nl-border-subtle)]">
+          <p className="text-[11px] font-mono text-[var(--nl-color-ink-disabled)]">
+            Noteleaf · Be fully present and focus on the conversation.
+          </p>
         </div>
       </div>
     </div>

@@ -199,4 +199,13 @@ describe('buildNoteFromTranscript', () => {
     );
     expect(note.tags.length).toBeGreaterThan(0);
   });
+
+  it('stores a general note when classification is disabled', () => {
+    const note = buildNoteFromTranscript(
+      { transcript: 'We need to schedule a follow-up with the product team by Friday', sessionId: 's1', sessionOffsetSeconds: 0 },
+      true,
+      false,
+    );
+    expect(note.type).toBe('summary');
+  });
 });

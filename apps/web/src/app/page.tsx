@@ -7,7 +7,7 @@ import { AuthGuard } from '@/components/layout/AuthGuard';
 
 export const metadata: Metadata = {
   title: 'Noteleaf',
-  description: 'Ambient AI notetaker — capture notes from any meeting on your device. No bot required.',
+  description: 'Be fully present and focus on the conversation. Ambient AI notetaker — capture notes from any meeting on your device. No bot required.',
 };
 
 export default function HomePage() {

@@ -31,6 +31,7 @@ interface SessionActions {
   appendTranscriptSegment: (segment: TranscriptSegment) => void;
   setActiveSessionTitle: (title: string) => void;
   setElapsedSeconds: (seconds: number) => void;
+  setActiveSessionDuration: (seconds: number) => void;
   updateNote: (noteId: string, content: string, type: Note['type']) => void;
   clearActiveSessionNotes: () => void;
   removeSession: (sessionId: string) => void;
@@ -134,6 +135,13 @@ export const useSessionStore = create<SessionState & SessionActions>()((set) => 
     })),
 
   setElapsedSeconds: (seconds) => set({ elapsedSeconds: seconds }),
+
+  setActiveSessionDuration: (seconds) =>
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === state.activeSessionId ? { ...s, durationSeconds: seconds } : s,
+      ),
+    })),
 
   updateNote: (noteId, content, type) =>
     set((state) => ({
