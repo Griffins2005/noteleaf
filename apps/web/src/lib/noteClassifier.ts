@@ -36,14 +36,18 @@ import { formatHumanNote, refineNoteType, cleanSpeech } from './noteWriter';
  *   - 'review' removed: too generic — "Product roadmap review" is a summary,
  *     not an action item. Only explicit "please review by X" triggers action.
  *   - 'check' removed: same reason — too many false positives in general speech.
+ *   - Bare 'we should', 'send', 'share', 'schedule' removed: they fire on
+ *     suggestions and narrative ("we share an office") rather than tasks.
  */
 const ACTION_PATTERNS: RegExp[] = [
-  /\b(we need to|we should|we have to|we must)\b/i,
-  /\b(action item|follow up|follow-up|todo|to do)\b/i,
+  /\b(we need to|we have to|we must)\b/i,
+  /\b(action item|follow up|follow-up|todo|to[- ]do)\b/i,
   /\b(can you|could you|would you|please)\b.{0,40}\b(by|before|until)\b/i,
   /\b(by (monday|tuesday|wednesday|thursday|friday|saturday|sunday|eod|eow|next week|tomorrow|end of day|end of week))\b/i,
-  /\b(assign(ed)?|deadline|due date|schedule|book|arrange|set up|send|share)\b/i,
-  /\bwho (will|is going to|can)\b/i,
+  /\b(assign(ed)?|deadline|due date)\b/i,
+  /\b(i('ll| will)|we('ll| will)|let's|please)\s+(schedule|book|arrange|set up|send|share)\b/i,
+  /\bwe should\b.{0,80}\b(by|before|until|tomorrow|monday|tuesday|wednesday|thursday|friday|eod|next week)\b/i,
+  /\bwho (will|is going to)\b.{0,40}\b(by|before|until)\b/i,
 ];
 
 /**

@@ -24,25 +24,44 @@ import { logger } from '../logger.js';
 
 const MODEL = 'nvidia/nemotron-3-super-120b-a12b';
 const NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1';
-const SUMMARIZE_MAX_TOKENS = 384;
+const SUMMARIZE_MAX_TOKENS = 768;
+const SUMMARIZE_EXCERPT_CHARS = 4000;
+const SUMMARIZE_SEGMENT_LIMIT = 40;
+const SUMMARIZE_NOTE_LIMIT = 40;
+
+function excerptTranscript(transcript: string, max = SUMMARIZE_EXCERPT_CHARS): string {
+  const t = transcript.trim().replace(/\s+/g, ' ');
+  if (t.length <= max) return t;
+  const ellipsis = ' … ';
+  const budget = max - ellipsis.length;
+  const head = Math.floor(budget * 0.4);
+  const tail = budget - head;
+  return `${t.slice(0, head).trimEnd()}${ellipsis}${t.slice(-tail).trimStart()}`;
+}
+
+function selectSegments<T>(segments: T[] | undefined, max = SUMMARIZE_SEGMENT_LIMIT): T[] | undefined {
+  if (!segments?.length) return undefined;
+  if (segments.length <= max) return segments;
+  const headCount = Math.min(8, max);
+  const tailCount = max - headCount;
+  const tailStart = Math.max(headCount, segments.length - tailCount);
+  return [...segments.slice(0, headCount), ...segments.slice(tailStart)];
+}
 
 // ─── Prompt ───────────────────────────────────────────────────────────────────
 
 function buildPrompt(request: SummarizeRequest): { system: string; user: string } {
-  const richNotes = request.notes.length >= 3;
-  const transcriptExcerpt = richNotes ? '' : (request.transcriptExcerpt ?? '').slice(0, 800);
-  const transcriptSegments = richNotes
-    ? undefined
-    : request.transcriptSegments?.slice(0, 12);
+  const transcriptExcerpt = excerptTranscript(request.transcriptExcerpt ?? '');
+  const transcriptSegments = selectSegments(request.transcriptSegments);
 
   const sessionLabel = request.sessionTitle
     ? `"${request.sessionTitle}"`
     : 'this session';
 
-  const notesText = request.notes
-    .slice(0, 24)
+  const notes = selectSegments(request.notes, SUMMARIZE_NOTE_LIMIT) ?? [];
+  const notesText = notes
     .map((n) => `[${n.type.toUpperCase()}] ${n.content}`)
-    .join('\n');
+    .join('\n') || '(none)';
 
   const transcriptLines = transcriptSegments
     ?.map((segment) => {
@@ -52,17 +71,25 @@ function buildPrompt(request: SummarizeRequest): { system: string; user: string 
     })
     .join('\n');
 
-  const transcriptSection = transcriptExcerpt.trim()
-    ? `\nTRANSCRIPT:\n${transcriptLines || transcriptExcerpt}`
-    : '';
+  const transcriptSectionParts: string[] = [];
+  if (transcriptLines) {
+    transcriptSectionParts.push(`TRANSCRIPT (timed):\n${transcriptLines}`);
+  }
+  if (transcriptExcerpt) {
+    transcriptSectionParts.push(`TRANSCRIPT (excerpt):\n${transcriptExcerpt}`);
+  }
+  const transcriptSection = transcriptSectionParts.length
+    ? `\n${transcriptSectionParts.join('\n\n')}`
+    : '\nTRANSCRIPT:\n(none)';
 
   const system =
-    'You output ONLY a single JSON object. No markdown fences. No explanation. No prose before or after.\n' +
+    'You write meeting recaps a participant would actually keep.\n' +
+    'Output ONLY a single JSON object. No markdown fences. No explanation.\n' +
     'The first character of your reply MUST be { and the last MUST be }.';
 
   const user = `Summarise ${sessionLabel}.
 
-NOTES:
+AUTO-TAGGED NOTES (tags are regex guesses and are often wrong — treat as hints, not facts):
 ${notesText}
 ${transcriptSection}
 
@@ -70,10 +97,12 @@ Return exactly this JSON shape (fill in values):
 {"overview":"1-2 sentences","decisions":[],"actionItems":[],"insights":[]}
 
 Rules:
-- overview: what happened — not verbatim speech
-- decisions: short "Decided: …" lines
-- actionItems: verb-first real tasks only — empty array if none
-- insights: one crisp observation each — empty array if none
+- Prefer the TRANSCRIPT as ground truth. Notes may mis-tag jokes, coaching, or "we should" as tasks.
+- overview: what the session was actually about — not verbatim speech, not a list of notes
+- decisions: only clear choices/agreements/approvals. Prefix "Decided: ". Empty array if none.
+- actionItems: verb-first real tasks only. Include owner or deadline only if spoken. Empty array if none.
+- insights: one crisp observation each, not a restated action. Empty array if none.
+- Prefer fewer, better items over a long unfaithful list
 - no invented facts, owners, or deadlines`;
 
   return { system, user };
@@ -205,8 +234,15 @@ export class NvidiaLlmService {
   }
 
   async summariseSession(request: SummarizeRequest): Promise<AiSummary> {
+    const startedAt = Date.now();
     logger.info(
-      { sessionId: request.sessionId, noteCount: request.notes.length, model: MODEL },
+      {
+        sessionId: request.sessionId,
+        noteCount: request.notes.length,
+        transcriptChars: (request.transcriptExcerpt ?? '').length,
+        segmentCount: request.transcriptSegments?.length ?? 0,
+        model: MODEL,
+      },
       'Generating AI summary via NVIDIA NIM',
     );
 
@@ -238,9 +274,22 @@ export class NvidiaLlmService {
     }
 
     const rawText = completion.choices[0]?.message?.content ?? '';
+    const finishReason = completion.choices[0]?.finish_reason;
+    const usage = completion.usage;
+    const latencyMs = Date.now() - startedAt;
+
+    if (finishReason === 'length') {
+      logger.warn(
+        { sessionId: request.sessionId, latencyMs, usage },
+        'NVIDIA NIM recap hit max_tokens; output may be truncated',
+      );
+    }
 
     if (!rawText) {
-      logger.warn({ sessionId: request.sessionId }, 'NVIDIA NIM returned empty summary; using note-based fallback');
+      logger.warn(
+        { sessionId: request.sessionId, latencyMs, finishReason, usage },
+        'NVIDIA NIM returned empty summary; using note-based fallback',
+      );
       const parsed = buildFallbackSummary(request);
       return {
         id:          uuidv4(),
@@ -271,9 +320,21 @@ export class NvidiaLlmService {
       {
         sessionId:     request.sessionId,
         summaryId:     summary.id,
+        latencyMs,
+        modelUsed:     summary.modelUsed,
+        fallback:      fromFallback,
+        finishReason,
+        promptTokens:  usage?.prompt_tokens,
+        completionTokens: usage?.completion_tokens,
+        overviewChars: summary.overview.length,
         decisionCount: summary.decisions.length,
         actionCount:   summary.actionItems.length,
         insightCount:  summary.insights.length,
+        emptyRecap:
+          !summary.overview &&
+          summary.decisions.length === 0 &&
+          summary.actionItems.length === 0 &&
+          summary.insights.length === 0,
       },
       'AI summary generated successfully',
     );
@@ -332,6 +393,7 @@ export class NvidiaLlmService {
 
     const userContent = `SOURCES:\n${allSources}\n\nQUESTION: ${request.question}`;
 
+    const startedAt = Date.now();
     logger.info(
       { noteCount: request.notes.length, segmentCount: request.transcriptSegments.length },
       'Chat: calling NVIDIA NIM',
@@ -344,7 +406,7 @@ export class NvidiaLlmService {
         ...historyMessages,
         { role: 'user', content: userContent },
       ],
-      max_tokens: 400,   // enough for JSON + longer answer without cutting off
+      max_tokens: 512,
       temperature: 0,    // deterministic — no chain-of-thought variation
     });
 
@@ -430,7 +492,12 @@ export class NvidiaLlmService {
     }
 
     logger.info(
-      { citationCount: citations.length },
+      {
+        citationCount: citations.length,
+        latencyMs: Date.now() - startedAt,
+        answerChars: answerText.length,
+        usedCount: usedIndexes.length,
+      },
       'Chat: answer generated',
     );
 

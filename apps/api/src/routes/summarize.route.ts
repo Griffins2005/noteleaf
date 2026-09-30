@@ -29,15 +29,15 @@ const summarizeSchema = z.object({
       content: z.string().min(1).max(2000),
       capturedAt: z.string(),
     }),
-  ).default([]),
-  transcriptExcerpt: z.string().max(1500).default(''),
+  ).max(40).default([]),
+  transcriptExcerpt: z.string().max(4000).default(''),
   transcriptSegments: z.array(
     z.object({
       text: z.string().min(1).max(2000),
       startOffsetSeconds: z.number().nonnegative(),
       endOffsetSeconds: z.number().nonnegative(),
     }),
-  ).optional(),
+  ).max(40).optional(),
   sessionTitle: z.string().max(200).optional(),
 }).superRefine((data, ctx) => {
   const hasNotes = data.notes.length > 0;

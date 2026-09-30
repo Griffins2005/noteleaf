@@ -45,6 +45,7 @@ import {
   hasChatContext,
 } from '@/lib/sessionContext';
 import { buildInstantRecap } from '@/lib/instantRecap';
+import { track } from '@vercel/analytics';
 
 // Types
 import type { AiSummary, SummarizeRequest, TranscriptSegment, NoteType, ChatMessage } from '@noteleaf/shared-types';
@@ -265,6 +266,12 @@ export function NotepadShell() {
       setAiSummary(summary);
       setAiState('success');
       setAiEnhancing(false);
+      track('recap_generated', {
+        model: summary.modelUsed === 'fallback' ? 'fallback' : 'nemotron',
+        actions: summary.actionItems.length,
+        decisions: summary.decisions.length,
+        insights: summary.insights.length,
+      });
       setTimeout(() => notesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       return summary;
     } catch (err) {
@@ -274,6 +281,7 @@ export function NotepadShell() {
           ? `${err.apiError.code}: ${err.apiError.message}`
           : err,
       );
+      track('recap_failed');
       if (background) {
         setAiEnhancing(false);
       } else {

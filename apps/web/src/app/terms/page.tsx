@@ -25,7 +25,7 @@ function Rule({ heading, body }: { heading: string; body: string }) {
 
 export default function TermsPage() {
   const router  = useRouter();
-  const updated = 'May 28, 2026';
+  const updated = 'September 30, 2026';
 
   return (
     <div className="min-h-screen bg-[var(--nl-color-paper-bg)]">
@@ -85,7 +85,7 @@ export default function TermsPage() {
         <Section title="Privacy Policy">
           <Rule
             heading="What we collect"
-            body="Your email, the notes and transcripts from your sessions, and any summaries you generate. Your audio never leaves your browser."
+            body="Your email, the notes and transcripts from your sessions, and any summaries you generate. Your audio never leaves your browser. We also collect cookieless page-view and performance metrics on the web app so we can see what is slow or broken."
           />
           <Rule
             heading="What we never do"
@@ -109,7 +109,7 @@ export default function TermsPage() {
           />
           <Rule
             heading="Cookies"
-            body="We store one auth token in your browser. No tracking cookies, no analytics."
+            body="We store one auth token in your browser. Vercel Web Analytics and Speed Insights measure traffic and page speed without cookies or personal identifiers. We do not sell this data."
           />
         </Section>
 

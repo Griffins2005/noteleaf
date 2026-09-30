@@ -3,6 +3,8 @@
 
 import type { Metadata, Viewport } from 'next';
 import { DM_Mono, Fraunces } from 'next/font/google';
+import { Analytics } from '@vercel/analytics/next';
+import { SpeedInsights } from '@vercel/speed-insights/next';
 import { Providers } from '@/components/layout/Providers';
 import '@/styles/tokens.css';
 import '@/styles/globals.css';
@@ -54,6 +56,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Providers>
           {children}
         </Providers>
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );

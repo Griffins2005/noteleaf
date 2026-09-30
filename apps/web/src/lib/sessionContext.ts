@@ -5,14 +5,22 @@
 
 import type { Note, TranscriptSegment } from '@noteleaf/shared-types';
 
+export const SUMMARIZE_EXCERPT_CHARS = 4000;
+export const SUMMARIZE_SEGMENT_LIMIT = 40;
+export const SUMMARIZE_NOTE_LIMIT = 40;
+
 export function notesForSummarize(notes: Note[]) {
-  return notes
-    .filter((n) => n.content.trim().length > 0)
-    .map((n) => ({
-      type: n.type,
-      content: n.content.trim(),
-      capturedAt: n.capturedAt,
-    }));
+  const cleaned = notes.filter((n) => n.content.trim().length > 0);
+  const selected =
+    cleaned.length <= SUMMARIZE_NOTE_LIMIT
+      ? cleaned
+      : [...cleaned.slice(0, 8), ...cleaned.slice(-(SUMMARIZE_NOTE_LIMIT - 8))];
+
+  return selected.map((n) => ({
+    type: n.type,
+    content: n.content.trim(),
+    capturedAt: n.capturedAt,
+  }));
 }
 
 export function segmentsForSummarize(segments: TranscriptSegment[]) {
@@ -25,19 +33,40 @@ export function segmentsForSummarize(segments: TranscriptSegment[]) {
     }));
 }
 
-/** Smaller payload when notes already capture the session — faster LLM recap. */
+/** Keep opening context and the latest discussion when the transcript is long. */
+export function excerptTranscript(transcript: string, max = SUMMARIZE_EXCERPT_CHARS): string {
+  const t = transcript.trim().replace(/\s+/g, ' ');
+  if (t.length <= max) return t;
+  const ellipsis = ' … ';
+  const budget = max - ellipsis.length;
+  const head = Math.floor(budget * 0.4);
+  const tail = budget - head;
+  return `${t.slice(0, head).trimEnd()}${ellipsis}${t.slice(-tail).trimStart()}`;
+}
+
+/** First few segments for setup, last segments for what was actually decided. */
+export function selectSegmentsForSummarize(
+  segments: TranscriptSegment[],
+  max = SUMMARIZE_SEGMENT_LIMIT,
+) {
+  const cleaned = segmentsForSummarize(segments);
+  if (cleaned.length <= max) return cleaned;
+  const headCount = Math.min(8, max);
+  const tailCount = max - headCount;
+  const tailStart = Math.max(headCount, cleaned.length - tailCount);
+  return [...cleaned.slice(0, headCount), ...cleaned.slice(tailStart)];
+}
+
+/** Always send transcript with notes — auto-tagged notes alone starve the recap. */
 export function buildSummarizePayload(
   notes: Note[],
   transcript: string,
   transcriptSegments: TranscriptSegment[],
 ) {
-  const apiNotes = notesForSummarize(notes);
-  const richNotes = apiNotes.length >= 3;
-
   return {
-    notes: apiNotes,
-    transcriptExcerpt: richNotes ? '' : transcript.trim().slice(0, 800),
-    transcriptSegments: richNotes ? [] : segmentsForSummarize(transcriptSegments).slice(0, 12),
+    notes: notesForSummarize(notes),
+    transcriptExcerpt: excerptTranscript(transcript),
+    transcriptSegments: selectSegmentsForSummarize(transcriptSegments),
   };
 }
 

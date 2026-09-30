@@ -44,6 +44,18 @@ describe('classifyTranscript', () => {
     it('classifies assignment language as action', () => {
       expect(classifyTranscript('Assign the onboarding task to the new engineer by Monday')).toBe('action');
     });
+
+    it('does not treat narrative "share" as an action', () => {
+      expect(classifyTranscript('We share an office with the design team downtown')).toBe('summary');
+    });
+
+    it('does not treat a packed schedule as an action', () => {
+      expect(classifyTranscript('The schedule looks packed this week for everyone')).toBe('summary');
+    });
+
+    it('classifies an explicit send commitment as action', () => {
+      expect(classifyTranscript("I'll send the deck after we wrap this up")).toBe('action');
+    });
   });
 
   describe('decision classification', () => {

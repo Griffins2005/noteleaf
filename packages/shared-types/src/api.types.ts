@@ -80,7 +80,7 @@ export interface SummarizeRequest {
   sessionId: string;
   /** Raw notes passed as context alongside the transcript. */
   notes: Pick<Note, 'type' | 'content' | 'capturedAt'>[];
-  /** Up to 1500 chars of raw transcript for context. */
+  /** Head+tail transcript excerpt (up to ~4000 chars) for recap context. */
   transcriptExcerpt: string;
   /** Timestamped transcript snippets for temporal context. */
   transcriptSegments?: Pick<TranscriptSegment, 'text' | 'startOffsetSeconds' | 'endOffsetSeconds'>[];
