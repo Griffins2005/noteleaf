@@ -45,6 +45,7 @@ import {
   hasChatContext,
 } from '@/lib/sessionContext';
 import { buildInstantRecap } from '@/lib/instantRecap';
+import { isMeaningfulSpeech, isPlaceholderRecap, isWeakRecapLine } from '@/lib/speechQuality';
 import { track } from '@vercel/analytics';
 
 // Types
@@ -300,10 +301,14 @@ export function NotepadShell() {
       const words = s.trim().split(/\s+/).slice(0, n).join(' ');
       return words.length > 48 ? words.slice(0, 48) + '…' : words;
     };
-    if (opts.summary?.overview) return trim(opts.summary.overview, 6);
-    const first = opts.notes.find((n) => n.type !== 'summary') ?? opts.notes[0];
+    if (opts.summary?.overview && !isPlaceholderRecap(opts.summary.overview) && !isWeakRecapLine(opts.summary.overview) && isMeaningfulSpeech(opts.summary.overview)) {
+      return trim(opts.summary.overview, 6);
+    }
+    const first = opts.notes.find((n) => n.type !== 'summary' && isMeaningfulSpeech(n.content) && !isWeakRecapLine(n.content))
+      ?? opts.notes.find((n) => isMeaningfulSpeech(n.content) && !isWeakRecapLine(n.content));
     if (first?.content) return trim(first.content, 5);
-    if (opts.transcriptSegments[0]?.text) return trim(opts.transcriptSegments[0].text, 5);
+    const spoken = opts.transcriptSegments.find((s) => isMeaningfulSpeech(s.text));
+    if (spoken?.text) return trim(spoken.text, 5);
     return `Session ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
   }
 
@@ -358,13 +363,13 @@ export function NotepadShell() {
     } = useSessionStore.getState();
 
     const rawTitle   = stoppedSessions.find((s) => s.id === stoppedSessionId)?.title ?? '';
-    const hasContent = stoppedNotes.length > 0 || stoppedTranscriptSegments.length > 0 || stoppedTranscript.trim().length > 0;
+    const hasContent = hasSummarizeContext(stoppedNotes, stoppedTranscript, stoppedTranscriptSegments);
 
     setActiveSessionDuration(elapsedSeconds);
     void qc.invalidateQueries({ queryKey: ['sessions', userId] });
 
     if (hasContent && stoppedSessionId) {
-      setAiSummary(buildInstantRecap(stoppedSessionId, stoppedNotes));
+      setAiSummary(buildInstantRecap(stoppedSessionId, stoppedNotes, stoppedTranscript));
       setAiState('success');
       setActiveTab('summary');
       if (!wasTabCoachDismissed(stoppedSessionId, 'summary')) {

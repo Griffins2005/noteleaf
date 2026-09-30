@@ -73,6 +73,9 @@ export interface AskNotesRequest {
    * Max last 6 turns are used to keep the prompt size bounded.
    */
   history: { role: 'user' | 'assistant'; content: string }[];
+
+  /** Session title — grounds answers in this recording, not world knowledge. */
+  sessionTitle?: string;
 }
 
 export interface AskNotesResponse {

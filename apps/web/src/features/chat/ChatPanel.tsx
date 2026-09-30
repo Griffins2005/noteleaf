@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { http, HttpError } from '@/lib/http.client';
-import { notesForChat, segmentsForChat } from '@/lib/sessionContext';
+import { notesForChat, segmentsForChat, hasChatContext } from '@/lib/sessionContext';
 import { getSuggestedQuestions, hasMoreToExplore } from '@/lib/suggestedQuestions';
 import { cn } from '@/lib/cn';
 import type { ChatMessage, ChatCitation, AskNotesResponse, Note, TranscriptSegment } from '@noteleaf/shared-types';
@@ -192,7 +192,7 @@ export function ChatPanel({
     () => segmentsForChat(transcriptSegments, contextOptions),
     [transcriptSegments, liveTranscript, fullTranscript, isRecording],
   );
-  const hasContext = apiNotes.length > 0 || apiSegments.length > 0;
+  const hasContext = hasChatContext(notes, transcriptSegments, contextOptions);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -224,6 +224,7 @@ export function ChatPanel({
         notes: apiNotes,
         transcriptSegments: apiSegments,
         history,
+        sessionTitle,
       });
 
       const assistantMsg: ChatMessage = {
@@ -272,9 +273,10 @@ export function ChatPanel({
       transcriptSegments,
       askedQuestions,
       isRecording,
+      sessionTitle,
       max: 3,
     }),
-    [notes, transcriptSegments, askedQuestions, isRecording],
+    [notes, transcriptSegments, askedQuestions, isRecording, sessionTitle],
   );
 
   const showSuggestions = suggestedQuestions.length > 0;
@@ -283,6 +285,7 @@ export function ChatPanel({
     transcriptSegments,
     askedQuestions,
     isRecording,
+    sessionTitle,
   });
 
   // ── Empty state ─────────────────────────────────────────────────────────────
@@ -306,7 +309,9 @@ export function ChatPanel({
           <p className="text-[12px] font-sans text-[var(--nl-color-ink-tertiary)] leading-relaxed mx-auto">
             {isRecording
               ? 'Start speaking — context appears here within a few seconds. You can ask questions while the meeting continues.'
-              : 'Start recording on the Notes tab. You can ask questions here once speech is captured.'}
+              : notes.length > 0 || transcriptSegments.length > 0 || (fullTranscript?.trim().length ?? 0) > 0
+                ? 'This recording did not capture enough speech to ask about. Try again closer to the mic.'
+                : 'Start recording on the Notes tab. You can ask questions here once speech is captured.'}
           </p>
         </div>
       </div>
@@ -353,7 +358,7 @@ export function ChatPanel({
         {messages.length === 0 && showSuggestions && (
           <div className="space-y-3 w-full py-4">
             <p className="font-serif text-[16px] text-[var(--nl-color-ink-tertiary)]">
-              {isRecording ? 'Ask while the meeting is in progress' : 'Ask anything about this meeting'}
+              {isRecording ? 'Ask while the meeting is in progress' : 'Questions from this session'}
             </p>
             {isRecording && (
               <p className="text-[11px] font-mono text-[var(--nl-color-ink-disabled)] leading-relaxed mb-1">
@@ -444,7 +449,7 @@ export function ChatPanel({
 
         {exploredAll && (
           <p className="text-center text-[11px] font-mono text-[var(--nl-color-ink-disabled)] py-2">
-            You&apos;ve covered the main topics in this session. Ask anything else below.
+            You&apos;ve covered what this session captured. Ask about something else from these notes below.
           </p>
         )}
 
@@ -468,7 +473,7 @@ export function ChatPanel({
               e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
             }}
             onKeyDown={handleKeyDown}
-            placeholder={isRecording ? 'Ask about what\'s been said so far…' : 'Ask about this meeting… (Enter to send)'}
+            placeholder={isRecording ? 'Ask about what\'s been said so far…' : 'Ask about this session… (Enter to send)'}
             rows={1}
             disabled={loading}
             className={cn(

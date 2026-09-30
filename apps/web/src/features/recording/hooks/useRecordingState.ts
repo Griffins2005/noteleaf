@@ -1,13 +1,13 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useSpeechRecognition } from './useSpeechRecognition';
-import { resolveSpeechLanguage } from '@/lib/speechLanguages';
 import { useNoteClassifier } from '@/features/notes/useNoteClassifier';
 import { useSessionStore } from '@/store/session.store';
 import { useUserStore } from '@/store/user.store';
 import { useAuthStore } from '@/store/auth.store';
 import { sessionsApi } from '@/features/sessions/sessions.api';
 import { persistRecordingSnapshot } from '@/features/recording/persistRecordingSnapshot';
+import { isSameUtterance, joinUtterances, shouldStitchUtterances } from '@/lib/utteranceStitch';
 import type { TranscriptSegment } from '@noteleaf/shared-types';
 
 export type AutosaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -47,6 +47,14 @@ export function useRecordingState(): UseRecordingStateReturn {
   const persistQueuedRef = useRef(false);
   const recordingSessionIdRef = useRef<string | null>(null);
   const isRecordingRef = useRef(false);
+  const stitchRef = useRef<{
+    text: string;
+    startOffsetSeconds: number;
+    endOffsetSeconds: number;
+    confidence: number;
+    sessionId: string;
+  } | null>(null);
+  const stitchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Stores ─────────────────────────────────────────────────────────────
 
@@ -71,6 +79,37 @@ export function useRecordingState(): UseRecordingStateReturn {
     onNoteCreated:  (note) => appendNote(note),
   });
 
+  const commitStitchedUtterance = useCallback(() => {
+    if (stitchTimerRef.current) {
+      clearTimeout(stitchTimerRef.current);
+      stitchTimerRef.current = null;
+    }
+    const pending = stitchRef.current;
+    stitchRef.current = null;
+    const trimmed = pending?.text.trim();
+    if (!pending || !trimmed) return;
+
+    appendTranscript(trimmed);
+    if (pending.sessionId) {
+      const segment: TranscriptSegment = {
+        id: uuidv4(),
+        sessionId: pending.sessionId,
+        text: trimmed,
+        capturedAt: new Date().toISOString(),
+        startOffsetSeconds: pending.startOffsetSeconds,
+        endOffsetSeconds: pending.endOffsetSeconds,
+        confidence: pending.confidence,
+      };
+      appendTranscriptSegment(segment);
+    }
+    processTranscriptSegment(
+      trimmed,
+      pending.endOffsetSeconds,
+      pending.confidence,
+      pending.sessionId || undefined,
+    );
+  }, [appendTranscript, appendTranscriptSegment, processTranscriptSegment]);
+
   // ── Speech recognition ─────────────────────────────────────────────────
 
   const { isSupported, start: startSTT, stop: stopSTT } = useSpeechRecognition({
@@ -86,23 +125,47 @@ export function useRecordingState(): UseRecordingStateReturn {
       }
 
       setLiveTranscript('');
-      appendTranscript(trimmed);
+      const activeId = useSessionStore.getState().activeSessionId ?? recordingSessionIdRef.current ?? '';
+      const incoming = {
+        text: trimmed,
+        startOffsetSeconds,
+        endOffsetSeconds,
+        confidence: confidence > 0 ? confidence : 1,
+        sessionId: activeId,
+      };
 
-      const activeId = useSessionStore.getState().activeSessionId;
-      if (activeId) {
-        const segment: TranscriptSegment = {
-          id: uuidv4(),
-          sessionId: activeId,
-          text: trimmed,
-          capturedAt: new Date().toISOString(),
-          startOffsetSeconds,
+      const pending = stitchRef.current;
+      if (pending && isSameUtterance(pending.text, trimmed)) {
+        stitchRef.current = {
+          ...pending,
+          text: trimmed.length > pending.text.length ? trimmed : pending.text,
           endOffsetSeconds,
-          confidence,
+          confidence: Math.max(pending.confidence, incoming.confidence),
         };
-        appendTranscriptSegment(segment);
+      } else if (
+        pending &&
+        shouldStitchUtterances(
+          pending.endOffsetSeconds,
+          startOffsetSeconds,
+          pending.text,
+          trimmed,
+        )
+      ) {
+        stitchRef.current = {
+          ...pending,
+          text: joinUtterances(pending.text, trimmed),
+          endOffsetSeconds,
+          confidence: Math.max(pending.confidence, incoming.confidence),
+        };
+      } else {
+        commitStitchedUtterance();
+        stitchRef.current = incoming;
       }
 
-      processTranscriptSegment(trimmed, endOffsetSeconds, confidence, activeId ?? undefined);
+      if (stitchTimerRef.current) clearTimeout(stitchTimerRef.current);
+      stitchTimerRef.current = setTimeout(() => {
+        commitStitchedUtterance();
+      }, 2200);
     },
 
     onError: (code, message) => {
@@ -273,7 +336,7 @@ export function useRecordingState(): UseRecordingStateReturn {
     }
 
     recordingSessionIdRef.current = sessionId;
-    startSTT(preferences.speechLanguage || resolveSpeechLanguage());
+    startSTT();
     setRecordingStatus('recording');
     startTimer();
     setAutosaveStatus('idle');
@@ -292,7 +355,6 @@ export function useRecordingState(): UseRecordingStateReturn {
     createSession,
     removeSession,
     isSupported,
-    preferences.speechLanguage,
     recordingStatus,
     startSTT,
     userId,
@@ -309,6 +371,7 @@ export function useRecordingState(): UseRecordingStateReturn {
     stopTimer();
 
     await stopSTT();
+    commitStitchedUtterance();
 
     persistQueuedRef.current = false;
     if (persistTimerRef.current) {
@@ -353,7 +416,7 @@ export function useRecordingState(): UseRecordingStateReturn {
 
     recordingSessionIdRef.current = null;
     setRecordingStatus('idle');
-  }, [recordingStatus, stopSTT]);
+  }, [recordingStatus, stopSTT, commitStitchedUtterance]);
 
   return {
     recordingStatus,

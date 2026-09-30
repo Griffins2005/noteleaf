@@ -28,7 +28,7 @@ function capitalizeFirst(text: string): string {
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
-function truncateAtClause(text: string, maxLen = 140): string {
+function truncateAtClause(text: string, maxLen = 220): string {
   const t = text.trim();
   if (t.length <= maxLen) return t;
 
@@ -99,15 +99,15 @@ function formatInsightNote(text: string): string {
 function formatSummaryNote(text: string): string {
   const words = text.split(/\s+/).filter(Boolean);
 
-  if (words.length > 30) {
+  if (words.length > 40) {
     const sentence = text.match(/^[^.!?]+[.!?]/)?.[0]?.trim();
     if (sentence && sentence.length >= 20) {
-      return truncateAtClause(sentence, 120);
+      return truncateAtClause(sentence, 180);
     }
-    return truncateAtClause(text, 110);
+    return truncateAtClause(text, 160);
   }
 
-  return truncateAtClause(capitalizeFirst(text));
+  return truncateAtClause(capitalizeFirst(text), 220);
 }
 
 /** Rewrite STT text into a note a person would actually keep. */
@@ -129,6 +129,9 @@ export function formatHumanNote(raw: string, type: NoteType): string {
 
 /** Adjust type when speech looks rhetorical but matched action heuristics. */
 export function refineNoteType(raw: string, type: NoteType): NoteType {
+  if (type === 'insight' && /good suggestion|very doable|i think so/i.test(raw) && raw.split(/\s+/).length < 18) {
+    return 'summary';
+  }
   if (type !== 'action') return type;
   if (isRhetoricalSpeech(raw)) return 'summary';
   if (!CONCRETE_TASK_PATTERN.test(raw) && !NAMED_ASSIGNEE_PATTERN.test(raw) && raw.split(/\s+/).length > 28) return 'summary';

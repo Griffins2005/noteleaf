@@ -6,14 +6,12 @@
  * This hook is the bridge between the real-time audio pipeline and the
  * note storage layer. It:
  *   1. Receives a final transcript string (immutable, from NVIDIA NIM).
- *   2. Filters out segments that are too short to be meaningful (< 15 chars).
+ *   2. Drops filler and fragments that are not real meeting speech.
  *   3. Calls buildNoteFromTranscript() to classify and tag the segment.
  *   4. Calls onNoteCreated() to persist the note to the session store.
  *
- * Debouncing strategy:
- *   NVIDIA NIM emits finals continuously. Short segments like "Mm-hmm" or
- *   "Right" are classified as 'summary' and included — they pad the transcript
- *   but do not mislead. The 15-char minimum filters most non-speech noise.
+ * Short segments like "Mm-hmm", "It's", or "thank you" stay in the transcript
+ * but never become notes.
  *
  * This hook has NO side effects other than calling onNoteCreated.
  * It does not write to state, make network calls, or touch the DOM.
@@ -29,6 +27,7 @@
 import { useCallback } from 'react';
 import type { Note } from '@noteleaf/shared-types';
 import { buildNoteFromTranscript } from '@/lib/noteClassifier';
+import { isMeaningfulSpeech } from '@/lib/speechQuality';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -76,16 +75,9 @@ export interface UseNoteClassifierReturn {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /**
- * Minimum character count for a transcript segment to be classified.
- * Segments shorter than this are filler words or noise and are discarded.
+ * Chrome often reports 0; treat that as unknown. Drop only clearly bad scores.
  */
-const MIN_SEGMENT_LENGTH = 15;
-
-/**
- * Minimum confidence score from NVIDIA NIM to accept a segment.
- * Segments below this threshold are likely mishearing and are discarded.
- */
-const MIN_CONFIDENCE = 0.5;
+const MIN_CONFIDENCE = 0.3;
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
@@ -95,8 +87,8 @@ export function useNoteClassifier(options: UseNoteClassifierOptions): UseNoteCla
   const processTranscriptSegment = useCallback(
     (text: string, sessionOffsetSeconds: number, confidence: number, sessionIdOverride?: string): void => {
       // Quality gate: discard short, low-confidence, or empty segments.
-      if (!text || text.trim().length < MIN_SEGMENT_LENGTH) return;
-      if (confidence < MIN_CONFIDENCE) return;
+      if (!text || !isMeaningfulSpeech(text)) return;
+      if (confidence > 0 && confidence < MIN_CONFIDENCE) return;
 
       const targetSessionId = sessionIdOverride ?? sessionId;
       if (!targetSessionId) return;

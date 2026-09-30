@@ -4,6 +4,7 @@
  */
 
 import type { Note, TranscriptSegment } from '@noteleaf/shared-types';
+import { hasEnoughSessionContent, isFillerSpeech } from './speechQuality';
 
 export const SUMMARIZE_EXCERPT_CHARS = 4000;
 export const SUMMARIZE_SEGMENT_LIMIT = 40;
@@ -63,10 +64,11 @@ export function buildSummarizePayload(
   transcript: string,
   transcriptSegments: TranscriptSegment[],
 ) {
+  const usableSegments = transcriptSegments.filter((s) => !isFillerSpeech(s.text));
   return {
-    notes: notesForSummarize(notes),
+    notes: notesForSummarize(notes).filter((n) => !isFillerSpeech(n.content)),
     transcriptExcerpt: excerptTranscript(transcript),
-    transcriptSegments: selectSegmentsForSummarize(transcriptSegments),
+    transcriptSegments: selectSegmentsForSummarize(usableSegments),
   };
 }
 
@@ -135,11 +137,7 @@ export function hasSummarizeContext(
   transcript: string,
   segments: TranscriptSegment[],
 ): boolean {
-  return (
-    notesForSummarize(notes).length > 0 ||
-    segmentsForSummarize(segments).length > 0 ||
-    transcript.trim().length > 0
-  );
+  return hasEnoughSessionContent(notes, transcript, segments);
 }
 
 export function hasChatContext(
@@ -151,8 +149,6 @@ export function hasChatContext(
     isRecording?: boolean;
   },
 ): boolean {
-  return (
-    notesForChat(notes).length > 0 ||
-    segmentsForChat(segments, options).length > 0
-  );
+  const chatSegments = segmentsForChat(segments, options);
+  return hasEnoughSessionContent(notes, options?.fullTranscript ?? '', chatSegments);
 }

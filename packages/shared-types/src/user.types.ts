@@ -21,7 +21,8 @@ export interface UserPreferences {
   autoTagKeywords: boolean;
 
   /**
-   * Language/locale for speech recognition (BCP-47, e.g. 'en-US'). Default: 'en-US'.
+   * Legacy speech-locale preference. Recording now follows the device language;
+   * this field is kept so stored prefs still parse.
    */
   speechLanguage: string;
 

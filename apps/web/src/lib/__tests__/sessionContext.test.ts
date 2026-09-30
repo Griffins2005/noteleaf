@@ -3,6 +3,7 @@ import type { Note, TranscriptSegment } from '@noteleaf/shared-types';
 import {
   buildSummarizePayload,
   excerptTranscript,
+  hasSummarizeContext,
   selectSegmentsForSummarize,
   SUMMARIZE_EXCERPT_CHARS,
   SUMMARIZE_SEGMENT_LIMIT,
@@ -79,5 +80,17 @@ describe('buildSummarizePayload', () => {
     expect(payload.notes).toHaveLength(4);
     expect(payload.transcriptExcerpt).toContain('navy theme');
     expect(payload.transcriptSegments).toHaveLength(1);
+  });
+});
+
+describe('hasSummarizeContext', () => {
+  it('is false for a failed listen with two fragments', () => {
+    expect(
+      hasSummarizeContext(
+        [],
+        '',
+        [segment("If you're ready", 0), segment("It's", 5)],
+      ),
+    ).toBe(false);
   });
 });

@@ -36,6 +36,7 @@ const askSchema = z.object({
     role:    z.enum(['user', 'assistant']),
     content: z.string().max(2000),
   })).max(20).default([]),
+  sessionTitle: z.string().max(200).optional(),
 });
 
 function parseStoredMessages(raw: unknown): ChatMessage[] {
@@ -99,12 +100,14 @@ export async function chatRoute(fastify: FastifyInstance): Promise<void> {
       );
 
       try {
+        const sessionTitle = parsed.data.sessionTitle?.trim() || session.title?.trim() || undefined;
         const result = await nvidiaLlmService.chatWithNotes({
           sessionId,
           question,
           notes,
           transcriptSegments,
           history,
+          ...(sessionTitle ? { sessionTitle } : {}),
         });
 
         const now = new Date().toISOString();

@@ -8,7 +8,6 @@ import { Toggle } from '@/components/ui/Toggle';
 import { useUserStore } from '@/store/user.store';
 import { useAuthStore } from '@/store/auth.store';
 import { http } from '@/lib/http.client';
-import { SPEECH_LANGUAGES, speechLanguageLabel } from '@/lib/speechLanguages';
 import type { UserPreferences } from '@noteleaf/shared-types';
 import { cn } from '@/lib/cn';
 
@@ -46,11 +45,6 @@ export function SettingsPanel() {
   function handleToggle(key: keyof UserPreferences, value: boolean) {
     setPreference(key, value);
     flashSaved(key);
-  }
-
-  function handleLanguageChange(code: string) {
-    setPreference('speechLanguage', code);
-    flashSaved('speechLanguage');
   }
 
   async function handleSaveRetention(days: number | null) {
@@ -154,35 +148,9 @@ export function SettingsPanel() {
         {prefRow('Show live transcript', 'Show real-time speech in the notes view while recording', 'showLiveTranscript')}
         {prefRow('Auto-tag keywords', 'Add keyword tags on each note card', 'autoTagKeywords')}
 
-        <div className="flex items-start justify-between py-3.5 gap-4">
-          <div className="min-w-0">
-            <p className="text-[13px] font-sans font-medium text-[var(--nl-color-ink-primary)]">Speech language</p>
-            <p className="text-[11px] font-mono text-[var(--nl-color-ink-tertiary)] mt-0.5 leading-relaxed">
-              Language used for live transcription
-            </p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {savedKey === 'speechLanguage' && (
-              <span className="text-[10px] font-mono text-[var(--nl-color-accent-primary)]">Saved</span>
-            )}
-            <label className="sr-only" htmlFor="nl-speech-language">Speech language</label>
-            <select
-              id="nl-speech-language"
-              value={preferences.speechLanguage}
-              onChange={(e) => handleLanguageChange(e.target.value)}
-              className="h-8 max-w-[200px] px-2 rounded-[var(--nl-radius-sm)] border border-[var(--nl-border-default)] bg-[var(--nl-color-paper-raised)] text-[12px] font-mono text-[var(--nl-color-ink-primary)] outline-none focus:border-[var(--nl-color-accent-primary)]"
-            >
-              {!SPEECH_LANGUAGES.some((l) => l.code === preferences.speechLanguage) && (
-                <option value={preferences.speechLanguage}>{speechLanguageLabel(preferences.speechLanguage)}</option>
-              )}
-              {SPEECH_LANGUAGES.map((lang) => (
-                <option key={lang.code} value={lang.code}>
-                  {lang.native ? `${lang.label} · ${lang.native}` : lang.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
+        <p className="text-[11px] font-mono text-[var(--nl-color-ink-tertiary)] leading-relaxed pt-3.5">
+          Live transcription follows this device&apos;s language automatically. Mixed-language meetings use the same recognizer — there is nothing to set.
+        </p>
       </section>
 
       <section>

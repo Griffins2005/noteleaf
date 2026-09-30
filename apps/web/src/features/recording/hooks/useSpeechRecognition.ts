@@ -4,10 +4,13 @@
  *
  * Long sessions: Chrome's backend often throws `network` after a few minutes.
  * We recover automatically (restart on end) and proactively rotate the recognition
- * instance every ~90s so sessions can run for an hour+.
+ * instance every ~90s on desktop. iPhone/iPad Safari cannot use `continuous` —
+ * we restart after each utterance so a 2-minute recording is not two fragments.
  */
 
 import { useRef, useCallback } from 'react';
+import { isAppleTouchDevice } from '@/lib/speechRuntime';
+import { resolveSpeechLanguage } from '@/lib/speechLanguages';
 
 // ─── Web Speech API type declarations ────────────────────────────────────────
 
@@ -91,7 +94,7 @@ export interface UseSpeechRecognitionOptions {
 
 export interface UseSpeechRecognitionReturn {
   isSupported: boolean;
-  start: (lang: string) => void;
+  start: () => void;
   stop: () => Promise<void>;
 }
 
@@ -104,6 +107,8 @@ export function useSpeechRecognition(
   const stopResolveRef       = useRef<(() => void) | null>(null);
   const langRef              = useRef('en-US');
   const proactiveRestartRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingInterimRef    = useRef('');
+  const appleTouchRef        = useRef(false);
   const restartBackoffRef    = useRef(80);
 
   const onPartialRef     = useRef(options.onPartialTranscript);
@@ -129,17 +134,28 @@ export function useSpeechRecognition(
     }
   };
 
+  const flushPendingInterim = useCallback(() => {
+    const pending = pendingInterimRef.current.trim();
+    pendingInterimRef.current = '';
+    if (!pending) return;
+    const endOffset   = (Date.now() - sessionStartRef.current) / 1000;
+    const startOffset = Math.max(0, endOffset - 8);
+    onFinalRef.current(pending, startOffset, endOffset, 1);
+  }, []);
+
   const scheduleProactiveRestart = useCallback(() => {
     clearProactiveRestart();
+    if (appleTouchRef.current) return;
     proactiveRestartRef.current = setInterval(() => {
       if (!activeRef.current || !recognitionRef.current) return;
+      flushPendingInterim();
       try {
         recognitionRef.current.stop();
       } catch {
         /* onend restarts */
       }
     }, PROACTIVE_RESTART_MS);
-  }, []);
+  }, [flushPendingInterim]);
 
   const createAndStart = useCallback(() => {
     const API = getAPI();
@@ -148,13 +164,14 @@ export function useSpeechRecognition(
     const recognition = new API();
     recognitionRef.current = recognition;
 
-    recognition.continuous      = true;
+    // iOS Safari ignores or silently stops `continuous: true` after a phrase or two.
+    recognition.continuous      = !appleTouchRef.current;
     recognition.interimResults  = true;
     recognition.lang            = langRef.current;
     recognition.maxAlternatives = 1;
 
     recognition.onresult = (event: ISpeechRecognitionEvent) => {
-      restartBackoffRef.current = 80;
+      restartBackoffRef.current = appleTouchRef.current ? 150 : 80;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
         if (!result) continue;
@@ -162,10 +179,12 @@ export function useSpeechRecognition(
         if (!alt) continue;
 
         if (result.isFinal) {
+          pendingInterimRef.current = '';
           const endOffset   = (Date.now() - sessionStartRef.current) / 1000;
           const startOffset = Math.max(0, endOffset - 3);
           onFinalRef.current(alt.transcript, startOffset, endOffset, alt.confidence || 1.0);
         } else {
+          pendingInterimRef.current = alt.transcript;
           onPartialRef.current(alt.transcript);
         }
       }
@@ -183,6 +202,7 @@ export function useSpeechRecognition(
 
       if (RECOVERABLE_ERRORS.has(event.error)) {
         onRecoverableRef.current?.(event.error);
+        flushPendingInterim();
         try { recognition.stop(); } catch { /* onend will restart */ }
         return;
       }
@@ -194,10 +214,12 @@ export function useSpeechRecognition(
 
     recognition.onend = () => {
       if (activeRef.current) {
+        flushPendingInterim();
         const delay = restartBackoffRef.current;
         restartBackoffRef.current = Math.min(delay * 1.5, 3000);
         setTimeout(createAndStart, delay);
       } else {
+        flushPendingInterim();
         stopResolveRef.current?.();
         stopResolveRef.current = null;
       }
@@ -210,14 +232,16 @@ export function useSpeechRecognition(
         setTimeout(createAndStart, restartBackoffRef.current);
       }
     }
-  }, []);
+  }, [flushPendingInterim]);
 
   const start = useCallback(
-    (lang: string) => {
-      langRef.current         = lang;
-      activeRef.current       = true;
-      restartBackoffRef.current = 80;
-      sessionStartRef.current = Date.now();
+    () => {
+      langRef.current           = resolveSpeechLanguage();
+      appleTouchRef.current     = isAppleTouchDevice();
+      activeRef.current         = true;
+      pendingInterimRef.current = '';
+      restartBackoffRef.current = appleTouchRef.current ? 150 : 80;
+      sessionStartRef.current   = Date.now();
       createAndStart();
       scheduleProactiveRestart();
     },
@@ -232,7 +256,7 @@ export function useSpeechRecognition(
       stopResolveRef.current = resolve;
       try { recognitionRef.current.stop(); } catch { resolve(); }
     });
-  }, []);
+  }, [flushPendingInterim]);
 
   return { isSupported, start, stop };
 }

@@ -5,6 +5,11 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import type { AiSummary, Note } from '@noteleaf/shared-types';
+import {
+  isWeakRecapLine,
+  overviewFromTranscript,
+  PLACEHOLDER_RECAP,
+} from './speechQuality';
 
 function trimOverview(text: string, maxLen = 220): string {
   const t = text.trim().replace(/\s+/g, ' ');
@@ -12,31 +17,33 @@ function trimOverview(text: string, maxLen = 220): string {
   return t.slice(0, maxLen).replace(/\s+\S*$/, '') + '…';
 }
 
-export function buildInstantRecap(sessionId: string, notes: Note[]): AiSummary {
-  const contentNotes = notes.filter((n) => n.content.trim() && n.type !== 'summary');
+function pickOverview(notes: Note[], transcript: string): string {
+  const contentNotes = notes.filter((n) => n.content.trim() && n.type !== 'summary' && !isWeakRecapLine(n.content));
+  const decisions = contentNotes.filter((n) => n.type === 'decision');
+  const insights = contentNotes.filter((n) => n.type === 'insight');
+  const actions = contentNotes.filter((n) => n.type === 'action');
+
+  if (decisions[0]) return trimOverview(decisions[0].content);
+  if (insights[0]) return trimOverview(insights[0].content);
+  if (transcript.trim().length >= 40) return overviewFromTranscript(transcript);
+  if (actions.length > 0) {
+    return trimOverview(`Session covered ${actions.length} follow-up${actions.length === 1 ? '' : 's'}.`);
+  }
+  const anyNote = notes.find((n) => n.content.trim() && !isWeakRecapLine(n.content));
+  if (anyNote) return trimOverview(anyNote.content);
+  return PLACEHOLDER_RECAP;
+}
+
+export function buildInstantRecap(sessionId: string, notes: Note[], transcript = ''): AiSummary {
+  const contentNotes = notes.filter((n) => n.content.trim() && n.type !== 'summary' && !isWeakRecapLine(n.content));
   const actions = contentNotes.filter((n) => n.type === 'action');
   const decisions = contentNotes.filter((n) => n.type === 'decision');
   const insights = contentNotes.filter((n) => n.type === 'insight');
 
-  let overview: string;
-  if (contentNotes.length === 0) {
-    overview = 'Live speech was captured. An AI-enhanced recap is on the way.';
-  } else if (decisions.length > 0) {
-    overview = trimOverview(decisions[0]!.content);
-  } else if (insights.length > 0) {
-    overview = trimOverview(insights[0]!.content);
-  } else if (actions.length > 0) {
-    overview = trimOverview(`Session covered ${actions.length} follow-up${actions.length === 1 ? '' : 's'}.`);
-  } else if (contentNotes.length === 1) {
-    overview = trimOverview(contentNotes[0]!.content);
-  } else {
-    overview = trimOverview(contentNotes[0]!.content);
-  }
-
   return {
     id: uuidv4(),
     sessionId,
-    overview,
+    overview: pickOverview(notes, transcript),
     decisions: decisions.map((n) => n.content.trim()),
     actionItems: actions.map((n) => n.content.trim()),
     insights: insights.map((n) => n.content.trim()),

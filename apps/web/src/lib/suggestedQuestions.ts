@@ -1,17 +1,27 @@
 /**
  * Session-scoped suggested questions for Ask notes.
- * Filters out questions already asked and rotates through session content.
+ * Only asks about what this recording actually contains.
  */
 
 import type { Note, TranscriptSegment } from '@noteleaf/shared-types';
+import { hasEnoughSessionContent, isMeaningfulSpeech, isPlaceholderRecap, isWeakRecapLine } from './speechQuality';
 
 export interface SuggestedQuestionsInput {
   notes: Note[];
   transcriptSegments: TranscriptSegment[];
   askedQuestions: string[];
   isRecording?: boolean;
+  sessionTitle?: string;
   max?: number;
 }
+
+const TOPIC_STOP = new Set([
+  'about', 'after', 'also', 'because', 'could', 'going', 'have', 'just', 'like',
+  'make', 'more', 'some', 'that', 'their', 'them', 'then', 'there', 'these',
+  'they', 'this', 'those', 'very', 'want', 'were', 'what', 'when', 'where',
+  'which', 'will', 'with', 'would', 'your', 'from', 'been', 'into',
+  'than', 'onto', 'over', 'such', 'each', 'both', 'same', 'other',
+]);
 
 function normalizeQuestion(q: string): string {
   return q.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
@@ -29,7 +39,6 @@ function isAlreadyAsked(candidate: string, asked: string[]): boolean {
   });
 }
 
-/** Simple word-overlap similarity for deduping paraphrased questions. */
 function similarity(a: string, b: string): number {
   const wordsA = new Set(a.split(' ').filter((w) => w.length > 3));
   const wordsB = new Set(b.split(' ').filter((w) => w.length > 3));
@@ -39,85 +48,101 @@ function similarity(a: string, b: string): number {
   return overlap / Math.max(wordsA.size, wordsB.size);
 }
 
-function snippet(s: string, maxWords = 6): string {
-  const words = s
-    .replace(/^(we need to|we should|we have to|can you|could you|please|let's|try)\s+/i, '')
-    .trim()
-    .split(/\s+/);
-  const phrase = words.slice(0, maxWords).join(' ');
-  return phrase.length > 42 ? phrase.slice(0, 42) + '…' : phrase;
+function isUsableTitle(title?: string): boolean {
+  const t = title?.trim() ?? '';
+  if (t.length < 8) return false;
+  if (/^session\b/i.test(t)) return false;
+  if (isPlaceholderRecap(t) || isWeakRecapLine(t)) return false;
+  return true;
 }
 
-function hasAssigneeHint(text: string): boolean {
-  return /\b(you|we|they|team|owner|assign|responsible|@|\b[A-Z][a-z]+\b)\b/i.test(text)
-    && /\b(need to|should|must|will|follow up|send|schedule|review)\b/i.test(text);
+function topicFromText(text: string): string | null {
+  if (!isMeaningfulSpeech(text) || isWeakRecapLine(text)) return null;
+  const cleaned = text
+    .replace(/^Decided:\s*/i, '')
+    .replace(/["“”']/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const tokens = cleaned
+    .split(/\s+/)
+    .map((w) => w.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, ''))
+    .filter(Boolean);
+
+  let best: { phrase: string; score: number } | null = null;
+
+  for (let i = 0; i < tokens.length; i++) {
+    for (const n of [2, 3]) {
+      const slice = tokens.slice(i, i + n);
+      if (slice.length < n) continue;
+      const lower = slice.map((w) => w.toLowerCase());
+      if (lower.some((w) => w.length < 3)) continue;
+      const content = lower.filter((w) => w.length >= 4 && !TOPIC_STOP.has(w));
+      if (content.length < 2) continue;
+      const score = content.length * 12 + content.reduce((s, w) => s + w.length, 0);
+      const phrase = slice.join(' ');
+      if (!best || score > best.score) best = { phrase, score };
+    }
+  }
+
+  if (!best) return null;
+  const original = cleaned.toLowerCase();
+  const withArticle = `the ${best.phrase}`;
+  const phrase = original.includes(withArticle.toLowerCase()) ? withArticle : best.phrase;
+  return phrase.length > 40 ? phrase.slice(0, 40).replace(/\s+\S*$/, '') : phrase;
+}
+
+function sessionTopics(notes: Note[], segments: TranscriptSegment[]): string[] {
+  const seen = new Set<string>();
+  const topics: string[] = [];
+
+  const pool = [
+    ...notes.filter((n) => n.type !== 'summary').map((n) => n.content),
+    ...notes.filter((n) => n.type === 'summary').map((n) => n.content),
+    ...segments.map((s) => s.text),
+  ];
+
+  for (const text of pool) {
+    const topic = topicFromText(text);
+    if (!topic) continue;
+    const key = topic.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    topics.push(topic);
+    if (topics.length >= 2) break;
+  }
+
+  return topics;
 }
 
 function buildCandidates(input: SuggestedQuestionsInput): string[] {
-  const { notes, transcriptSegments, isRecording } = input;
+  const { notes, transcriptSegments, isRecording, sessionTitle } = input;
+  if (!hasEnoughSessionContent(notes, '', transcriptSegments)) return [];
+
+  const actions = notes.filter((n) => n.type === 'action' && isMeaningfulSpeech(n.content) && !isWeakRecapLine(n.content));
+  const decisions = notes.filter((n) => n.type === 'decision' && isMeaningfulSpeech(n.content) && !isWeakRecapLine(n.content));
   const candidates: string[] = [];
 
   if (isRecording) {
-    candidates.push('What has been discussed so far?');
-    candidates.push('Any decisions or themes mentioned yet?');
+    candidates.push('What has been covered so far in this session?');
   }
 
-  const actions   = notes.filter((n) => n.type === 'action');
-  const decisions = notes.filter((n) => n.type === 'decision');
-  const insights  = notes.filter((n) => n.type === 'insight');
-  const summaries = notes.filter((n) => n.type === 'summary');
-
-  for (const note of actions) {
-    if (hasAssigneeHint(note.content)) {
-      candidates.push(`Who should handle: "${snippet(note.content)}"?`);
-    } else {
-      candidates.push(`What was meant by: "${snippet(note.content)}"?`);
-    }
+  if (decisions.length > 0) {
+    candidates.push('What did we decide in this session?');
+  }
+  if (actions.length > 0) {
+    candidates.push('What follow-ups came out of this session?');
   }
 
-  for (const note of decisions) {
-    candidates.push(`What was decided about "${snippet(note.content, 5)}"?`);
+  for (const topic of sessionTopics(notes, transcriptSegments)) {
+    candidates.push(`What was said about ${topic}?`);
   }
 
-  for (const note of insights) {
-    candidates.push(`Explain this insight: "${snippet(note.content, 5)}"`);
+  if (isUsableTitle(sessionTitle)) {
+    candidates.push(`What should someone know from ${sessionTitle!.trim()}?`);
+  } else {
+    candidates.push('What should someone who missed this session know?');
   }
-
-  for (const note of summaries.slice(0, 3)) {
-    candidates.push(`Summarise the point about "${snippet(note.content, 5)}"`);
-  }
-
-  if (transcriptSegments.length >= 2) {
-    candidates.push('What topics were covered and in what order?');
-    candidates.push('What were the main themes in this session?');
-    const last = transcriptSegments.at(-1);
-    if (last?.text) {
-      candidates.push(`What was said about "${snippet(last.text, 5)}"?`);
-    }
-  }
-
-  if (actions.length > 1) {
-    candidates.push(`List all ${actions.length} action-related points from this session.`);
-  }
-  if (decisions.length > 1) {
-    candidates.push(`Summarise all ${decisions.length} decisions captured.`);
-  }
-
-  const generic = isRecording
-    ? [
-        'Were any deadlines or timelines mentioned?',
-        'What open questions came up?',
-        'Summarise the last few minutes.',
-      ]
-    : [
-        'What were the main outcomes of this session?',
-        'What action items were captured?',
-        'What key quotes stand out from the transcript?',
-        'Were any deadlines or timelines mentioned?',
-        'What should someone who missed this meeting know?',
-      ];
-
-  candidates.push(...generic);
 
   return candidates;
 }

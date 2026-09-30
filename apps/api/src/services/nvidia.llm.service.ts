@@ -98,10 +98,10 @@ Return exactly this JSON shape (fill in values):
 
 Rules:
 - Prefer the TRANSCRIPT as ground truth. Notes may mis-tag jokes, coaching, or "we should" as tasks.
-- overview: what the session was actually about — not verbatim speech, not a list of notes
+- overview: name the subject (project, product, problem) in 1-2 sentences. Never copy filler like "good suggestion", "very doable", "I think so", thanks, or greetings.
 - decisions: only clear choices/agreements/approvals. Prefix "Decided: ". Empty array if none.
 - actionItems: verb-first real tasks only. Include owner or deadline only if spoken. Empty array if none.
-- insights: one crisp observation each, not a restated action. Empty array if none.
+- insights: concrete facts from the transcript (who, what system, what constraint). Not encouragement.
 - Prefer fewer, better items over a long unfaithful list
 - no invented facts, owners, or deadlines`;
 
@@ -135,6 +135,33 @@ function normalizeSummaryShape(raw: SummaryJsonShape): SummaryJsonShape {
     actionItems: raw.actionItems.map((s) => String(s).trim()).filter(Boolean),
     insights: raw.insights.map((s) => String(s).trim()).filter(Boolean),
   };
+}
+
+function isWeakOverview(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!t) return true;
+  return /good suggestion|very doable|i think so|captured notes|not enough speech/.test(t);
+}
+
+function overviewFromTranscript(excerpt: string): string {
+  const t = excerpt.trim().replace(/\s+/g, ' ');
+  if (t.length < 40) return 'Not enough speech was captured to write a recap.';
+  const cap = t.charAt(0).toUpperCase() + t.slice(1);
+  if (cap.length <= 220) return cap;
+  return `${cap.slice(0, 220).replace(/\s+\S*$/, '')}…`;
+}
+
+function polishSummary(shape: SummaryJsonShape, request: SummarizeRequest): SummaryJsonShape {
+  const insights = shape.insights.filter((s) => !isWeakOverview(s));
+  const actionItems = shape.actionItems.filter((s) => !isWeakOverview(s) && s.split(/\s+/).length >= 3);
+  const decisions = shape.decisions.filter((s) => !isWeakOverview(s));
+  let overview = shape.overview.trim();
+  if (isWeakOverview(overview)) {
+    overview = overviewFromTranscript(request.transcriptExcerpt ?? '');
+    if (isWeakOverview(overview) && decisions[0]) overview = decisions[0]!;
+    if (isWeakOverview(overview) && insights[0]) overview = insights[0]!;
+  }
+  return { overview, decisions, actionItems, insights };
 }
 
 /** Extract JSON from model output — handles fences, preamble, and chain-of-thought. */
@@ -190,20 +217,20 @@ function buildFallbackSummary(request: SummarizeRequest): SummaryJsonShape {
   } else if (contentNotes[0]) {
     overview = contentNotes[0]!.content.trim();
   } else {
-    overview = 'Session recap from captured notes.';
+    overview = 'Not enough speech was captured to write a recap.';
   }
 
-  return normalizeSummaryShape({
+  return polishSummary(normalizeSummaryShape({
     overview,
     decisions,
     actionItems,
     insights,
-  });
+  }), request);
 }
 
 function parseResponse(rawText: string, request: SummarizeRequest): { shape: SummaryJsonShape; fromFallback: boolean } {
   const parsed = tryParseSummaryJson(rawText);
-  if (parsed) return { shape: parsed, fromFallback: false };
+  if (parsed) return { shape: polishSummary(parsed, request), fromFallback: false };
 
   logger.warn(
     { sessionId: request.sessionId, raw: rawText.slice(0, 200) },
@@ -235,16 +262,37 @@ export class NvidiaLlmService {
 
   async summariseSession(request: SummarizeRequest): Promise<AiSummary> {
     const startedAt = Date.now();
+    const sourceWords = [
+      ...request.notes.map((n) => n.content),
+      request.transcriptExcerpt ?? '',
+      ...(request.transcriptSegments ?? []).map((s) => s.text),
+    ].join(' ').trim().split(/\s+/).filter((w) => w.length > 1).length;
+
     logger.info(
       {
         sessionId: request.sessionId,
         noteCount: request.notes.length,
         transcriptChars: (request.transcriptExcerpt ?? '').length,
         segmentCount: request.transcriptSegments?.length ?? 0,
+        sourceWords,
         model: MODEL,
       },
       'Generating AI summary via NVIDIA NIM',
     );
+
+    if (sourceWords < 24) {
+      logger.info({ sessionId: request.sessionId, sourceWords }, 'Skipping recap — not enough speech');
+      return {
+        id:          uuidv4(),
+        sessionId:   request.sessionId,
+        overview:    'Not enough speech was captured to write a recap.',
+        decisions:   [],
+        actionItems: [],
+        insights:    [],
+        modelUsed:   'skipped',
+        generatedAt: new Date().toISOString(),
+      };
+    }
 
     const { system, user } = buildPrompt(request);
 
@@ -369,29 +417,52 @@ export class NvidiaLlmService {
     });
 
     const allSources = [...noteLines, ...segmentLines].join('\n');
+    const sourceWords = [
+      ...request.notes.map((n) => n.content),
+      ...request.transcriptSegments.map((s) => s.text),
+    ].join(' ').trim().split(/\s+/).filter((w) => w.length > 1).length;
+
+    if (sourceWords < 24) {
+      logger.info({ sourceWords }, 'Chat: skipping — not enough speech');
+      return {
+        answer: 'This session did not capture enough speech to answer that.',
+        citations: [],
+      };
+    }
 
     // ── Prompt — JSON-only output prevents chain-of-thought from leaking ─────
     // Nemotron reasons internally; asking for free-form text causes it to write
     // that reasoning out. A strict JSON schema forces it to produce only the
     // answer and a list of source indices.
 
+    const sessionLabel = request.sessionTitle?.trim()
+      ? `"${request.sessionTitle.trim()}"`
+      : 'this recorded session';
+
     const system =
-      'You are a meeting notes assistant. Answer using ONLY the numbered sources provided.\n\n' +
-      'Important context:\n' +
+      `You answer questions about ${sessionLabel} only. The numbered sources below are the entire world you know.\n\n` +
+      'Rules:\n' +
+      '- Use ONLY the numbered sources from this recording.\n' +
+      '- Do not use world knowledge, definitions, or facts that are not in the sources.\n' +
+      '- If the question is general knowledge, another meeting, or a topic not in the sources, say it was not discussed in this session.\n' +
+      '- Do not define terms or lecture on a subject just because a related word appears in the sources.\n' +
       '- Sources may be rhetorical speech, monologue, jokes, or storytelling — not literal meeting tasks.\n' +
       '- Notes tagged ACTION are auto-classified from speech and may be figurative advice, not real assignments.\n' +
+      '- If the sources are only greetings, fragments, or unclear speech, say the session did not capture enough speech. Do not invent topics.\n' +
       '- Do NOT invent owners, responsibilities, or deadlines unless explicitly stated in the sources.\n' +
       '- For "who is responsible" questions about rhetorical advice, say the speaker is addressing the audience; do not name a person unless named in sources.\n\n' +
       'Respond with ONLY this JSON object — no other text:\n' +
       '{"answer":"1-3 sentence answer.","used":[1,3]}\n\n' +
-      'If the answer is not in the sources: {"answer":"Not mentioned in this session.","used":[]}\n\n' +
+      'If the sources are too thin to answer: {"answer":"This session did not capture enough speech to answer that.","used":[]}\n' +
+      'If the answer is not in otherwise usable sources: {"answer":"Not mentioned in this session.","used":[]}\n\n' +
       'No preamble. No explanation. No thinking. JSON only.';
 
     const historyMessages = request.history
       .slice(-4)
       .map((h) => ({ role: h.role as 'user' | 'assistant', content: h.content }));
 
-    const userContent = `SOURCES:\n${allSources}\n\nQUESTION: ${request.question}`;
+    const userContent =
+      `SESSION: ${sessionLabel}\nAnswer only from this session's sources.\n\nSOURCES:\n${allSources}\n\nQUESTION: ${request.question}`;
 
     const startedAt = Date.now();
     logger.info(
