@@ -12,7 +12,7 @@ import '@/styles/globals.css';
 
 const dmMono = DM_Mono({
   subsets: ['latin'],
-  weight: ['300', '400', '500'],
+  weight: ['400', '500'],
   style: ['normal', 'italic'],
   variable: '--font-dm-mono',
   display: 'swap',
@@ -20,7 +20,7 @@ const dmMono = DM_Mono({
 
 const fraunces = Fraunces({
   subsets: ['latin'],
-  weight: ['300', '500', '700'],
+  weight: ['400', '500', '700'],
   style: ['normal', 'italic'],
   variable: '--font-fraunces',
   display: 'swap',

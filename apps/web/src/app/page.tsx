@@ -1,9 +1,8 @@
-// Root page. Wraps NotepadShell in AuthGuard so unauthenticated users
-// are redirected to /auth before any session data is fetched.
+// Root page. Auth runs first; the notepad chunk loads in parallel so `/`
+// does not ship recording, chat, and notes JS on the first paint.
 
 import type { Metadata } from 'next';
-import { NotepadShell } from '@/components/layout/NotepadShell';
-import { AuthGuard } from '@/components/layout/AuthGuard';
+import { HomeApp } from './HomeApp';
 
 export const metadata: Metadata = {
   title: 'Noteleaf',
@@ -11,9 +10,5 @@ export const metadata: Metadata = {
 };
 
 export default function HomePage() {
-  return (
-    <AuthGuard>
-      <NotepadShell />
-    </AuthGuard>
-  );
+  return <HomeApp />;
 }
