@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SessionStatus } from '@prisma/client';
 import { expiredSessionWhere, retentionCutoff } from './retention.service.js';
 
 describe('retentionCutoff', () => {
@@ -16,7 +17,7 @@ describe('expiredSessionWhere', () => {
     expect(expiredSessionWhere('user-1', 30, now)).toEqual({
       userUuid: 'user-1',
       updatedAt: { lt: new Date('2026-08-03T12:00:00.000Z') },
-      status: { not: 'RECORDING' },
+      status: { not: SessionStatus.RECORDING },
     });
   });
 });

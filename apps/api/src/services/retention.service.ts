@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import { SessionStatus, type Prisma, type PrismaClient } from '@prisma/client';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -12,11 +12,11 @@ export function expiredSessionWhere(
   userUuid: string,
   days: number,
   now = new Date(),
-) {
+): Prisma.SessionWhereInput {
   return {
     userUuid,
     updatedAt: { lt: retentionCutoff(days, now) },
-    status: { not: 'RECORDING' },
+    status: { not: SessionStatus.RECORDING },
   };
 }
 
