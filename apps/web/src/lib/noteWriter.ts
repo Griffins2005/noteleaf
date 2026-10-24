@@ -28,18 +28,6 @@ function capitalizeFirst(text: string): string {
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
-function truncateAtClause(text: string, maxLen = 220): string {
-  const t = text.trim();
-  if (t.length <= maxLen) return t;
-
-  const cut = t.slice(0, maxLen);
-  const punct = Math.max(cut.lastIndexOf('.'), cut.lastIndexOf('!'), cut.lastIndexOf('?'), cut.lastIndexOf(';'));
-  if (punct > maxLen * 0.45) return cut.slice(0, punct + 1).trim();
-
-  const space = cut.lastIndexOf(' ');
-  return `${(space > 0 ? cut.slice(0, space) : cut).trim()}…`;
-}
-
 /** Remove disfluencies and collapse whitespace. */
 export function cleanSpeech(text: string): string {
   const stripped = text.replace(FILLER_PATTERN, ' ');
@@ -70,10 +58,10 @@ function formatActionNote(text: string): string {
 
   const byMatch = t.match(/^(.+?)\s+(by\s+.+)$/i);
   if (byMatch) {
-    return truncateAtClause(`${capitalizeFirst(byMatch[1]!.trim())} ${byMatch[2]!.trim()}`);
+    return `${capitalizeFirst(byMatch[1]!.trim())} ${byMatch[2]!.trim()}`;
   }
 
-  return truncateAtClause(capitalizeFirst(t));
+  return capitalizeFirst(t);
 }
 
 function formatDecisionNote(text: string): string {
@@ -85,7 +73,7 @@ function formatDecisionNote(text: string): string {
     .replace(/^we('ll| will) go with\s+/i, 'Go with ');
 
   const body = capitalizeFirst(t.trim());
-  return truncateAtClause(body.startsWith('Decided:') ? body : `Decided: ${body.charAt(0).toLowerCase()}${body.slice(1)}`);
+  return body.startsWith('Decided:') ? body : `Decided: ${body.charAt(0).toLowerCase()}${body.slice(1)}`;
 }
 
 function formatInsightNote(text: string): string {
@@ -93,21 +81,11 @@ function formatInsightNote(text: string): string {
     .replace(/^(it is |it's |its )?(important(ly)?|worth noting|key point|note that|keep in mind)\s+(that )?/i, '')
     .replace(/^(i|we) (realized|realised|discovered|found) (that )?/i, '');
 
-  return truncateAtClause(capitalizeFirst(t.trim()));
+  return capitalizeFirst(t.trim());
 }
 
 function formatSummaryNote(text: string): string {
-  const words = text.split(/\s+/).filter(Boolean);
-
-  if (words.length > 40) {
-    const sentence = text.match(/^[^.!?]+[.!?]/)?.[0]?.trim();
-    if (sentence && sentence.length >= 20) {
-      return truncateAtClause(sentence, 180);
-    }
-    return truncateAtClause(text, 160);
-  }
-
-  return truncateAtClause(capitalizeFirst(text), 220);
+  return capitalizeFirst(text);
 }
 
 /** Rewrite STT text into a note a person would actually keep. */

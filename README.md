@@ -25,11 +25,13 @@ Noteleaf sits open on your laptop while you meet — in a conference room, on a 
 
 Noteleaf uses your laptop mic or any connected microphone. It does not intercept your video call app, does not hook into Zoom or Teams or Meet, and does not appear as a participant. It works in physical rooms, on calls you attend, and in one-on-one conversations.
 
-### 2. Speech recognition runs in the browser
+### 2. Speech is transcribed as the meeting goes on
 
-Noteleaf uses the browser's built-in **Web Speech API** (Chrome and Edge). Audio is processed locally — no audio bytes are sent to any server. Interim results appear in the live transcript bar; finalised sentences go to the classifier.
+Noteleaf captures microphone audio and streams it to NVIDIA speech recognition through the Noteleaf API. Words appear in the live transcript while people are still talking. Each finished line is stamped from the audio clock, using word start and end times. If the connection drops, the unfinalized audio is sent again so that stretch is not left blank.
 
-> **Your audio never leaves your device.** Only the transcribed text is sent to Noteleaf's servers.
+The browser's speech recognizer is only a fallback when the speech service cannot be reached. That fallback is labeled in the app. Its timestamps are approximate.
+
+> **Audio is sent to Noteleaf's speech service for transcription and is not stored.** Noteleaf keeps the transcript and the notes. A short in-memory buffer exists only so a dropped connection can be retried, and it is discarded when the session ends.
 
 ### 3. Every sentence is automatically classified
 
@@ -128,13 +130,13 @@ Click the gear icon at the bottom of the sidebar.
 
 ## What Noteleaf does not do
 
-**It does not record audio files.** Audio is processed in the browser in real time and discarded. Only transcribed text is stored.
+**It does not keep audio files.** Audio is streamed for transcription and discarded. Only the transcript and notes are stored.
 
 **It does not identify speakers.** All speech is captured as one stream.
 
 **It does not work offline.** AI summary and chat require internet access to reach NVIDIA's API.
 
-**It is not a legal-grade transcription service.** The Web Speech API works well in clear acoustic conditions. Heavy accents, technical jargon, and simultaneous speakers reduce accuracy.
+**It is not a legal-grade transcription service.** Accuracy depends on the room, accents, jargon, and people talking at the same time. A background tab pauses the microphone, and those minutes are not transcribed.
 
 **The free NVIDIA API has rate limits.** Approximately 40 requests per minute — sufficient for a single user.
 
@@ -243,6 +245,7 @@ npm run dev
 | `API_INTERNAL_URL` | `http://localhost:3001` | `https://noteleaf-api.onrender.com` (Vercel only) |
 | `NEXT_PUBLIC_APP_URL` | `http://localhost:3003` | `https://noteleaf.vercel.app` |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:3002` | `https://noteleaf.vercel.app` (same origin; `/api` proxied) |
+| `NEXT_PUBLIC_WS_URL` | unset locally; derived from `NEXT_PUBLIC_API_URL` | `wss://noteleaf-api.onrender.com/api/stt/stream` |
 | `API_URL` | `http://localhost:3002` | `https://noteleaf-api.onrender.com` |
 | `DATABASE_URL` / `DIRECT_DATABASE_URL` | Docker Postgres `:5433` | Neon pooled + direct |
 | `NVIDIA_API_KEY`, `JWT_SECRET` | required | required |
@@ -346,15 +349,13 @@ Next.js rewrites `/api/*` to the Fastify server, so browser requests are same-or
 Browser microphone
     │
     ▼
-Web Speech API  (browser-native · Chrome / Edge)
-  Interim results → live transcript bar
-  Final results   → classifier
-    │  (no audio leaves the device)
+PCM capture (16 kHz mono)
+  In-memory replay buffer — discarded when the session ends
+    │
     ▼
-useNoteClassifier  (client-side hook)
-  Quality gate: ≥ 15 chars · ≥ 0.5 confidence
-  Classifies → action | decision | insight | note
-  Extracts up to 3 keyword tags
+WebSocket /api/stt/stream → NVIDIA speech recognition
+  Partials → live transcript bar
+  Finals with word timestamps → transcript segments → classifier → notes
     │
     ▼
 Zustand session store
@@ -362,9 +363,11 @@ Zustand session store
   appendTranscriptSegment → activeTranscriptSegments
     │
     ▼
-Note card renders instantly
-Session persisted to API on recording stop via PATCH /api/sessions/:id
+Note card renders as each line is finalized
+Session persisted to API while recording and again on stop
 ```
+
+If the speech service cannot be reached, the browser recognizer takes over and the app says that those timestamps are approximate.
 
 ---
 
@@ -455,7 +458,7 @@ React Query is the source of truth for server data. Zustand `session.store` hold
 
 ### Key design decisions
 
-**Web Speech API instead of server-side STT** — Audio never leaves the device for transcription. No WebSocket audio proxy, no audio format conversion, no added latency. Trade-off: Chrome and Edge only; Firefox is not supported.
+**Streaming speech recognition** — Audio is sent to NVIDIA through the Noteleaf API so the transcript can keep up with the meeting and carry real timestamps. Audio is not stored. The browser recognizer is a labeled fallback, not the source of the transcript.
 
 **JWT + refresh token auth instead of UUID-only** — Proper revocation on sign-out and account deletion. UUID-only credentials had no way to invalidate a compromised token.
 
@@ -547,9 +550,9 @@ apps/web/src/
 
   features/recording/hooks/
     useRecordingState.ts           — Recording orchestrator: mic → classifier → store → API
-    useSpeechRecognition.ts        — Web Speech API wrapper (continuous, auto-restart)
-    useAudioCapture.ts             — MediaRecorder wrapper (used by STT WebSocket mode)
-    useSTTWebSocket.ts             — WebSocket STT client (self-hosted NIM mode)
+    useSpeechRecognition.ts        — Browser recognizer, used only if the speech service is unreachable
+    useAudioCapture.ts             — Microphone PCM capture for the live speech stream
+    useSTTWebSocket.ts             — WebSocket client for /api/stt/stream
 
   features/notes/
     useNoteClassifier.ts           — Quality-gated classifier hook

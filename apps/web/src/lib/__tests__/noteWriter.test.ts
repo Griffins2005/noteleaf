@@ -38,10 +38,12 @@ describe('noteWriter', () => {
     expect(note.toLowerCase()).toContain('blue design');
   });
 
-  it('truncates long summary monologue', () => {
+  it('keeps the full wording of a long note', () => {
     const long =
       'Nairobi is a city built on decisions made in the time it takes you to merge into oncoming traffic the makanga does not consult a focus group he sees a one inch gap between a fuel tanker and a pro box and he goes he commits he prays after not before that ladies and gentleman university';
     const note = formatHumanNote(long, 'summary');
-    expect(note.length).toBeLessThan(180);
+    expect(note.length).toBeGreaterThan(180);
+    expect(note.toLowerCase()).toContain('makanga');
+    expect(note.toLowerCase()).toContain('university');
   });
 });

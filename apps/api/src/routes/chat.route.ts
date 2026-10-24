@@ -23,12 +23,12 @@ const askSchema = z.object({
   notes: z.array(z.object({
     id:         z.string(),
     type:       z.string(),
-    content:    z.string().min(1).max(2000),
+    content:    z.string().min(1).max(100_000),
     capturedAt: z.string(),
   })).max(200),
   transcriptSegments: z.array(z.object({
     id:                 z.string(),
-    text:               z.string().min(1).max(2000),
+    text:               z.string().min(1).max(100_000),
     startOffsetSeconds: z.number().nonnegative(),
     endOffsetSeconds:   z.number().nonnegative(),
   })).max(500),
