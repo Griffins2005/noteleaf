@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { buildGoogleAuthorizeUrl, resolveAppOrigin } from '@/lib/googleOAuth';
 
-export const runtime = 'edge';
 export const dynamic = 'force-dynamic';
 
 /**
