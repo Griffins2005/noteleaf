@@ -49,7 +49,9 @@ import { isMeaningfulSpeech, isPlaceholderRecap, isWeakRecapLine } from '@/lib/s
 import { track } from '@vercel/analytics';
 
 // Types
-import type { AiSummary, SummarizeRequest, TranscriptSegment, NoteType, ChatMessage } from '@noteleaf/shared-types';
+import type { AiSummary, Note, SummarizeRequest, SummarizeResult, TranscriptSegment, NoteType, ChatMessage } from '@noteleaf/shared-types';
+import { applyNoteCommitments } from '@/lib/noteCommitments';
+import { applyNoteCorrections } from '@/lib/noteCorrections';
 import { cn } from '@/lib/cn';
 
 // ─── Main shell ───────────────────────────────────────────────────────────────
@@ -92,6 +94,7 @@ export function NotepadShell() {
     setActiveSessionTitle,
     setActiveSessionDuration,
     updateNote,
+    replaceActiveNotes,
     removeSession,
   } = useSessionStore();
 
@@ -112,6 +115,9 @@ export function NotepadShell() {
     startRecording,
     stopRecording,
     autosaveStatus,
+    recoveredAudioSeconds,
+    transcribeRecoveredAudio,
+    dismissRecoveredAudio,
   } = useRecordingState();
 
   // ── Query: session list ────────────────────────────────────────────────
@@ -259,11 +265,33 @@ export function NotepadShell() {
     try {
       const payload = buildSummarizePayload(notes, transcript, transcriptSegments);
 
-      const summary = await http.post<AiSummary>('/api/ai/summarize', {
+      const result = await http.post<SummarizeResult>('/api/ai/summarize', {
         sessionId,
         ...payload,
         sessionTitle: options?.sessionTitle ?? activeItem?.title,
       } satisfies SummarizeRequest);
+      const { noteCorrections = [], commitments = [], ...summary } = result;
+
+      if (
+        (noteCorrections.length > 0 || commitments.length > 0) &&
+        sessionId === useSessionStore.getState().activeSessionId
+      ) {
+        const latest = useSessionStore.getState().activeNotes;
+        const corrected = applyNoteCommitments(
+          applyNoteCorrections(latest, noteCorrections),
+          commitments,
+        );
+        if (corrected !== latest) {
+          replaceActiveNotes(corrected);
+          try {
+            await sessionsApi.update(sessionId, { notes: corrected });
+          } catch (err) {
+            console.error('[Notes] Failed to save corrected notes:', err);
+            replaceActiveNotes(latest);
+            setNoteSaveError("Couldn't save the updated notes. Check your connection and try again.");
+          }
+        }
+      }
 
       setAiSummary(summary);
       setAiState('success');
@@ -291,7 +319,7 @@ export function NotepadShell() {
       }
       return undefined;
     }
-  }, [activeItem?.title, activeNotes, activeSessionId, activeTranscript, activeTranscriptSegments]);
+  }, [activeItem?.title, activeNotes, activeSessionId, activeTranscript, activeTranscriptSegments, replaceActiveNotes]);
 
   function generateTitle(opts: {
     summary?: AiSummary;
@@ -324,8 +352,8 @@ export function NotepadShell() {
     }
   }
 
-  function handleNoteUpdate(id: string, content: string, type: NoteType) {
-    updateNote(id, content, type);
+  function handleNoteUpdate(id: string, content: string, type: NoteType, commitment?: Note['commitment'] | null) {
+    updateNote(id, content, type, commitment);
     const latest = useSessionStore.getState().activeNotes;
     void syncNoteEdits(latest);
   }
@@ -661,6 +689,28 @@ export function NotepadShell() {
                 className="mx-4 sm:mx-7 mt-3 px-4 py-2.5 rounded-[var(--nl-radius-sm)] bg-[var(--nl-color-danger-subtle)] border border-red-200 text-[11px] font-mono text-[var(--nl-color-danger)] shrink-0"
               >
                 {sessionError ?? noteSaveError}
+              </div>
+            )}
+
+            {recoveredAudioSeconds != null && recordingStatus === 'idle' && (
+              <div role="status" className="mx-4 sm:mx-7 mt-3 px-4 py-2.5 rounded-[var(--nl-radius-sm)] bg-amber-50 border border-amber-200 text-[11px] font-mono text-amber-800 shrink-0 flex flex-wrap items-center gap-3">
+                <span className="flex-1 min-w-[12rem]">
+                  This tab closed with {formatMinuteSecond(recoveredAudioSeconds)} of audio that was not transcribed.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void transcribeRecoveredAudio()}
+                  className="px-2.5 py-1 rounded-[var(--nl-radius-sm)] bg-amber-800 text-white"
+                >
+                  Transcribe it
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissRecoveredAudio}
+                  className="text-amber-800/80"
+                >
+                  Dismiss
+                </button>
               </div>
             )}
 

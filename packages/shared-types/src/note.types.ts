@@ -26,6 +26,12 @@
  */
 export type NoteType = 'action' | 'decision' | 'insight' | 'summary';
 
+/** Owner and deadline pulled from a task. Null means that part was not said. */
+export interface NoteCommitment {
+  owner: string | null;
+  deadline: string | null;
+}
+
 // ─── Note entity ─────────────────────────────────────────────────────────────
 
 /**
@@ -78,6 +84,12 @@ export interface Note {
    * been reviewed vs. raw AI output.
    */
   isUserEdited?: boolean;
+
+  /**
+   * Set when a recap treats this note as a task.
+   * A null owner or deadline is a gap, not a guess.
+   */
+  commitment?: NoteCommitment;
 }
 
 // ─── Classifier input/output ─────────────────────────────────────────────────

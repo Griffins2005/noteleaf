@@ -10,7 +10,8 @@ import { useAuthStore } from '@/store/auth.store';
 import { sessionsApi } from '@/features/sessions/sessions.api';
 import { persistRecordingSnapshot } from '@/features/recording/persistRecordingSnapshot';
 import { isSameUtterance, joinUtterances, shouldStitchUtterances } from '@/lib/utteranceStitch';
-import { PcmTimeline } from '@/lib/pcmTimeline';
+import { PcmTimeline, untranscribedMs, type PcmTimelineSnapshot } from '@/lib/pcmTimeline';
+import { clearUnfinalizedAudio, loadUnfinalizedAudio, saveUnfinalizedAudio } from '@/features/recording/recordingRecovery';
 import { resolveSpeechLanguage } from '@/lib/speechLanguages';
 import type { TranscriptSegment } from '@noteleaf/shared-types';
 
@@ -34,6 +35,10 @@ export interface UseRecordingStateReturn {
   stopRecording:  () => Promise<void>;
   /** Mid-session persist to the server — notes/transcript save as you talk. */
   autosaveStatus: AutosaveStatus;
+  /** Seconds of audio kept on this device after the tab closed, still untranscribed. */
+  recoveredAudioSeconds: number | null;
+  transcribeRecoveredAudio: () => Promise<void>;
+  dismissRecoveredAudio: () => void;
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
@@ -47,6 +52,7 @@ export function useRecordingState(): UseRecordingStateReturn {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [coveredThroughSeconds, setCoveredThroughSeconds] = useState(0);
   const [autosaveStatus, setAutosaveStatus] = useState<AutosaveStatus>('idle');
+  const [recoveredAudioSeconds, setRecoveredAudioSeconds] = useState<number | null>(null);
   const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const elapsedRef = useRef(0);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -73,6 +79,10 @@ export function useRecordingState(): UseRecordingStateReturn {
   const streamFailedRef = useRef(false);
   const streamConfigRef = useRef({ sessionId: '', userUuid: '', languageCode: 'en-US' });
   const showLiveRef = useRef(true);
+  const replayRef = useRef(false);
+  const recoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recoverySnapshotRef = useRef<PcmTimelineSnapshot | null>(null);
+  const hiddenAtRef = useRef<{ at: number; capturedMs: number } | null>(null);
 
   // ── Stores ─────────────────────────────────────────────────────────────
 
@@ -241,10 +251,36 @@ export function useRecordingState(): UseRecordingStateReturn {
     }
   }, []);
 
+  const persistRecovery = useCallback(() => {
+    const sessionId = recordingSessionIdRef.current;
+    if (!sessionId || modeRef.current !== 'stream' || replayRef.current) return;
+    const snapshot = timelineRef.current.snapshot();
+    if (untranscribedMs(snapshot) < 1000) {
+      void clearUnfinalizedAudio(sessionId);
+      return;
+    }
+    void saveUnfinalizedAudio({
+      sessionId,
+      savedAt: new Date().toISOString(),
+      snapshot,
+    }).catch((err) => {
+      console.error('[Recovery] Failed to keep unfinalized audio:', err);
+    });
+  }, []);
+
+  const scheduleRecovery = useCallback(() => {
+    if (recoveryTimerRef.current) return;
+    recoveryTimerRef.current = setTimeout(() => {
+      recoveryTimerRef.current = null;
+      persistRecovery();
+    }, 2000);
+  }, [persistRecovery]);
+
   const { startCapture, stopCapture, resumeCapture } = useAudioCapture({
     onAudioChunk: (base64, byteLength) => {
       if (modeRef.current !== 'stream') return;
       timelineRef.current.push(base64, byteLength);
+      scheduleRecovery();
       flushUnsent();
     },
   });
@@ -339,7 +375,7 @@ export function useRecordingState(): UseRecordingStateReturn {
       hadReadyRef.current = true;
       reconnectAttemptRef.current = 0;
       clearStreamTimers();
-      setSttWarning(null);
+      if (!replayRef.current) setSttWarning(null);
       flushUnsent();
     },
     onUnexpectedClose: () => {
@@ -350,6 +386,8 @@ export function useRecordingState(): UseRecordingStateReturn {
         return;
       }
       if (!hadReadyRef.current) {
+        streamFailedRef.current = true;
+        if (replayRef.current) return;
         fallbackToBrowser();
         return;
       }
@@ -360,6 +398,7 @@ export function useRecordingState(): UseRecordingStateReturn {
       console.warn(`[STT] ${code}: ${message}`);
       if (!hadReadyRef.current) {
         streamFailedRef.current = true;
+        if (replayRef.current) return;
         if (isRecordingRef.current) fallbackToBrowser();
         return;
       }
@@ -452,7 +491,7 @@ export function useRecordingState(): UseRecordingStateReturn {
 
   useEffect(() => {
     if (recordingStatus !== 'recording') {
-      isRecordingRef.current = false;
+      if (!replayRef.current) isRecordingRef.current = false;
       return;
     }
 
@@ -482,12 +521,32 @@ export function useRecordingState(): UseRecordingStateReturn {
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') {
         saveOnLeave();
+        persistRecovery();
+        hiddenAtRef.current = {
+          at: Date.now(),
+          capturedMs: timelineRef.current.capturedThroughMs,
+        };
         if (modeRef.current === 'stream') {
           setSttWarning('Keep this tab open. The microphone pauses in the background, and those minutes are not transcribed.');
         }
+        void resumeCapture();
       } else {
         void resumeCapture();
-        if (modeRef.current === 'stream' && readyRef.current) setSttWarning(null);
+        const hidden = hiddenAtRef.current;
+        hiddenAtRef.current = null;
+        if (hidden && modeRef.current === 'stream') {
+          const wallSeconds = (Date.now() - hidden.at) / 1000;
+          const capturedSeconds = (timelineRef.current.capturedThroughMs - hidden.capturedMs) / 1000;
+          const missed = wallSeconds - capturedSeconds;
+          if (wallSeconds >= 3 && missed >= 2) {
+            const seconds = Math.round(missed);
+            const minutes = Math.floor(seconds / 60);
+            const remainder = String(seconds % 60).padStart(2, '0');
+            setSttWarning(`The microphone paused for about ${minutes}:${remainder} while this tab was hidden. That stretch was not transcribed.`);
+          } else if (readyRef.current) {
+            setSttWarning(null);
+          }
+        }
       }
     };
 
@@ -500,7 +559,7 @@ export function useRecordingState(): UseRecordingStateReturn {
       window.removeEventListener('pagehide', saveOnLeave);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [recordingStatus, flushPersist, schedulePersist, readSnapshot, resumeCapture]);
+  }, [recordingStatus, flushPersist, schedulePersist, readSnapshot, resumeCapture, persistRecovery]);
 
   // ── Start recording ────────────────────────────────────────────────────
 
@@ -534,6 +593,9 @@ export function useRecordingState(): UseRecordingStateReturn {
     }
 
     recordingSessionIdRef.current = sessionId;
+    void clearUnfinalizedAudio(sessionId);
+    recoverySnapshotRef.current = null;
+    setRecoveredAudioSeconds(null);
     modeRef.current = 'stream';
     readyRef.current = false;
     hadReadyRef.current = false;
@@ -611,9 +673,19 @@ export function useRecordingState(): UseRecordingStateReturn {
       await stopSTT();
       commitStitchedUtterance();
     } else {
+      if (recoveryTimerRef.current) {
+        clearTimeout(recoveryTimerRef.current);
+        recoveryTimerRef.current = null;
+      }
       stopCapture();
       flushUnsent();
       await stopSession();
+      const keepId = recordingSessionIdRef.current;
+      if (keepId && timelineRef.current.unsentPieces().length === 0) {
+        await clearUnfinalizedAudio(keepId);
+      } else {
+        persistRecovery();
+      }
       timelineRef.current.reset();
     }
     modeRef.current = null;
@@ -662,7 +734,126 @@ export function useRecordingState(): UseRecordingStateReturn {
 
     recordingSessionIdRef.current = null;
     setRecordingStatus('idle');
-  }, [recordingStatus, stopSTT, commitStitchedUtterance, clearStreamTimers, stopCapture, flushUnsent, stopSession]);
+  }, [recordingStatus, stopSTT, commitStitchedUtterance, clearStreamTimers, stopCapture, flushUnsent, stopSession, persistRecovery]);
+
+  useEffect(() => {
+    if (!activeSessionId || recordingStatus !== 'idle') return;
+    let cancelled = false;
+    void loadUnfinalizedAudio(activeSessionId).then((record) => {
+      if (cancelled) return;
+      if (!record) {
+        recoverySnapshotRef.current = null;
+        setRecoveredAudioSeconds(null);
+        return;
+      }
+      const coveredMs = useSessionStore.getState().activeTranscriptSegments
+        .reduce((max, segment) => Math.max(max, segment.endOffsetSeconds), 0) * 1000;
+      const finalizedThroughMs = Math.max(record.snapshot.finalizedThroughMs, coveredMs);
+      const snapshot: PcmTimelineSnapshot = {
+        ...record.snapshot,
+        finalizedThroughMs,
+        chunks: record.snapshot.chunks.filter((chunk) => chunk.endMs > finalizedThroughMs),
+      };
+      if (untranscribedMs(snapshot) < 1000 || snapshot.chunks.length === 0) {
+        void clearUnfinalizedAudio(activeSessionId);
+        recoverySnapshotRef.current = null;
+        setRecoveredAudioSeconds(null);
+        return;
+      }
+      recoverySnapshotRef.current = snapshot;
+      setRecoveredAudioSeconds(Math.round(untranscribedMs(snapshot) / 1000));
+    }).catch((err) => {
+      console.error('[Recovery] Failed to read saved audio:', err);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSessionId, recordingStatus]);
+
+  const dismissRecoveredAudio = useCallback(() => {
+    const sessionId = activeSessionId;
+    recoverySnapshotRef.current = null;
+    setRecoveredAudioSeconds(null);
+    if (sessionId) void clearUnfinalizedAudio(sessionId);
+  }, [activeSessionId]);
+
+  const transcribeRecoveredAudio = useCallback(async () => {
+    const snapshot = recoverySnapshotRef.current;
+    const sessionId = activeSessionId;
+    if (!snapshot || !sessionId || recordingStatus !== 'idle') return;
+
+    const waitFor = async (ready: () => boolean, timeoutMs: number) => {
+      const started = Date.now();
+      while (!ready() && Date.now() - started < timeoutMs) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      return ready();
+    };
+
+    replayRef.current = true;
+    isRecordingRef.current = true;
+    modeRef.current = 'stream';
+    readyRef.current = false;
+    hadReadyRef.current = false;
+    streamFailedRef.current = false;
+    recordingSessionIdRef.current = sessionId;
+    timelineRef.current.restore(snapshot);
+    setRecordingStatus('connecting');
+    setSttWarning('Transcribing audio saved from the closed tab…');
+    streamConfigRef.current = {
+      sessionId,
+      userUuid: userId,
+      languageCode: resolveSpeechLanguage(),
+    };
+    startSession({
+      ...streamConfigRef.current,
+      audioOffsetMs: timelineRef.current.finalizedThroughMs,
+    });
+
+    await waitFor(() => readyRef.current || streamFailedRef.current, 8000);
+    if (!readyRef.current) {
+      replayRef.current = false;
+      isRecordingRef.current = false;
+      modeRef.current = null;
+      recordingSessionIdRef.current = null;
+      setRecordingStatus('idle');
+      setSttWarning('Couldn’t reach the speech service. The saved audio is still on this device.');
+      return;
+    }
+
+    flushUnsent();
+    const budget = Math.min(60_000, Math.max(4000, untranscribedMs(snapshot) + 3000));
+    await waitFor(() => timelineRef.current.unsentPieces().length === 0, budget);
+    await waitFor(() => untranscribedMs(timelineRef.current.snapshot()) < 1000, budget);
+    await stopSession();
+    const kept = timelineRef.current.snapshot();
+    const leftover = untranscribedMs(kept) >= 1000 && kept.chunks.length > 0;
+    timelineRef.current.reset();
+    replayRef.current = false;
+    isRecordingRef.current = false;
+    modeRef.current = null;
+    readyRef.current = false;
+    recordingSessionIdRef.current = null;
+    setRecordingStatus('idle');
+
+    if (leftover) {
+      recoverySnapshotRef.current = kept;
+      setRecoveredAudioSeconds(Math.round(untranscribedMs(kept) / 1000));
+      void saveUnfinalizedAudio({
+        sessionId,
+        savedAt: new Date().toISOString(),
+        snapshot: kept,
+      });
+      setSttWarning('Some of the saved audio still needs a connection. Try again.');
+      return;
+    }
+
+    await clearUnfinalizedAudio(sessionId);
+    recoverySnapshotRef.current = null;
+    setRecoveredAudioSeconds(null);
+    setSttWarning(null);
+    void flushPersist('stopped');
+  }, [activeSessionId, recordingStatus, userId, startSession, flushUnsent, stopSession, flushPersist]);
 
   return {
     recordingStatus,
@@ -674,5 +865,8 @@ export function useRecordingState(): UseRecordingStateReturn {
     startRecording,
     stopRecording,
     autosaveStatus,
+    recoveredAudioSeconds,
+    transcribeRecoveredAudio,
+    dismissRecoveredAudio,
   };
 }

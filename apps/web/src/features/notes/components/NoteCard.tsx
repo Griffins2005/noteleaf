@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { cn } from '@/lib/cn';
-import type { Note, NoteType } from '@noteleaf/shared-types';
+import type { Note, NoteCommitment, NoteType } from '@noteleaf/shared-types';
 
 export interface NoteCardProps {
   note: Note;
@@ -11,7 +11,7 @@ export interface NoteCardProps {
    * 'feed'               — includes type badge, for chronological live view.
    */
   variant?: 'document' | 'feed';
-  onUpdate?: (id: string, content: string, type: NoteType) => void;
+  onUpdate?: (id: string, content: string, type: NoteType, commitment?: NoteCommitment | null) => void;
   className?: string;
 }
 
@@ -39,18 +39,34 @@ export function NoteCard({ note, variant = 'document', onUpdate, className }: No
   const [editing, setEditing]     = useState(false);
   const [draft, setDraft]         = useState(note.content);
   const [draftType, setDraftType] = useState<NoteType>(note.type);
+  const [draftOwner, setDraftOwner] = useState(note.commitment?.owner ?? '');
+  const [draftDeadline, setDraftDeadline] = useState(note.commitment?.deadline ?? '');
   const textareaRef               = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (!editing) { setDraft(note.content); setDraftType(note.type); }
-  }, [note.content, note.type, editing]);
+    if (!editing) {
+      setDraft(note.content);
+      setDraftType(note.type);
+      setDraftOwner(note.commitment?.owner ?? '');
+      setDraftDeadline(note.commitment?.deadline ?? '');
+    }
+  }, [note.content, note.type, note.commitment, editing]);
 
-  function startEdit()  { setDraft(note.content); setDraftType(note.type); setEditing(true); }
+  function startEdit()  {
+    setDraft(note.content);
+    setDraftType(note.type);
+    setDraftOwner(note.commitment?.owner ?? '');
+    setDraftDeadline(note.commitment?.deadline ?? '');
+    setEditing(true);
+  }
   function cancelEdit() { setEditing(false); }
   function saveEdit()   {
     const trimmed = draft.trim();
     if (!trimmed) { cancelEdit(); return; }
-    onUpdate?.(note.id, trimmed, draftType);
+    const commitment = draftType === 'action'
+      ? { owner: draftOwner.trim() || null, deadline: draftDeadline.trim() || null }
+      : null;
+    onUpdate?.(note.id, trimmed, draftType, commitment);
     setEditing(false);
   }
 
@@ -94,6 +110,23 @@ export function NoteCard({ note, variant = 'document', onUpdate, className }: No
               {NOTE_TYPES.map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
             </select>
           </div>
+
+          {draftType === 'action' && (
+            <div className="flex gap-2 mb-2">
+              <input
+                value={draftOwner}
+                onChange={(e) => setDraftOwner(e.target.value)}
+                placeholder="Owner"
+                className="flex-1 rounded px-2 py-1 text-[12px] bg-[var(--nl-color-paper-sunken)] border border-[var(--nl-border-default)] text-[var(--nl-color-ink-primary)] focus:outline-none focus:border-[var(--nl-color-accent-primary)]"
+              />
+              <input
+                value={draftDeadline}
+                onChange={(e) => setDraftDeadline(e.target.value)}
+                placeholder="Deadline"
+                className="flex-1 rounded px-2 py-1 text-[12px] bg-[var(--nl-color-paper-sunken)] border border-[var(--nl-border-default)] text-[var(--nl-color-ink-primary)] focus:outline-none focus:border-[var(--nl-color-accent-primary)]"
+              />
+            </div>
+          )}
 
           <textarea
             ref={textareaRef}
@@ -152,6 +185,18 @@ export function NoteCard({ note, variant = 'document', onUpdate, className }: No
           )}>
             {note.content}
           </p>
+
+          {note.commitment && (
+            <p className="mt-1.5 text-[11px] font-mono text-[var(--nl-color-ink-tertiary)]">
+              <span className={note.commitment.owner ? undefined : 'text-amber-800'}>
+                {note.commitment.owner ?? 'No owner named'}
+              </span>
+              <span className="text-[var(--nl-color-ink-disabled)]"> · </span>
+              <span className={note.commitment.deadline ? undefined : 'text-amber-800'}>
+                {note.commitment.deadline ?? 'No deadline named'}
+              </span>
+            </p>
+          )}
 
           {/* Meta row */}
           <div className="flex items-center gap-3 mt-2 text-[11px] font-mono text-[var(--nl-color-ink-tertiary)]">

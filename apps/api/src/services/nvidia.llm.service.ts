@@ -17,50 +17,35 @@
 
 import OpenAI from 'openai';
 import { v4 as uuidv4 } from 'uuid';
-import type { AiSummary, SummarizeRequest, AskNotesRequest, AskNotesResponse, ChatCitation } from '@noteleaf/shared-types';
+import type { SummarizeRequest, SummarizeResult, AskNotesRequest, AskNotesResponse, ChatCitation } from '@noteleaf/shared-types';
 import { logger } from '../logger.js';
+import { selectChatContext } from './chatContext.js';
+import { excerptTranscript, SUMMARIZE_NOTE_LIMIT, SUMMARIZE_SEGMENT_LIMIT, takeAcross } from './meetingWindow.js';
+import { parseCommitments, type NoteCommitmentUpdate } from './commitments.js';
+import { parseNoteCorrections, type NoteTypeCorrection } from './noteCorrections.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MODEL = 'nvidia/nemotron-3-super-120b-a12b';
 const NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1';
-const SUMMARIZE_MAX_TOKENS = 768;
-const SUMMARIZE_EXCERPT_CHARS = 4000;
-const SUMMARIZE_SEGMENT_LIMIT = 40;
-const SUMMARIZE_NOTE_LIMIT = 40;
-
-function excerptTranscript(transcript: string, max = SUMMARIZE_EXCERPT_CHARS): string {
-  const t = transcript.trim().replace(/\s+/g, ' ');
-  if (t.length <= max) return t;
-  const ellipsis = ' … ';
-  const budget = max - ellipsis.length;
-  const head = Math.floor(budget * 0.4);
-  const tail = budget - head;
-  return `${t.slice(0, head).trimEnd()}${ellipsis}${t.slice(-tail).trimStart()}`;
-}
-
-function selectSegments<T>(segments: T[] | undefined, max = SUMMARIZE_SEGMENT_LIMIT): T[] | undefined {
-  if (!segments?.length) return undefined;
-  if (segments.length <= max) return segments;
-  const headCount = Math.min(8, max);
-  const tailCount = max - headCount;
-  const tailStart = Math.max(headCount, segments.length - tailCount);
-  return [...segments.slice(0, headCount), ...segments.slice(tailStart)];
-}
+const SUMMARIZE_MAX_TOKENS = 1200;
 
 // ─── Prompt ───────────────────────────────────────────────────────────────────
 
 function buildPrompt(request: SummarizeRequest): { system: string; user: string } {
   const transcriptExcerpt = excerptTranscript(request.transcriptExcerpt ?? '');
-  const transcriptSegments = selectSegments(request.transcriptSegments);
+  const orderedSegments = [...(request.transcriptSegments ?? [])].sort(
+    (a, b) => a.startOffsetSeconds - b.startOffsetSeconds,
+  );
+  const transcriptSegments = takeAcross(orderedSegments, SUMMARIZE_SEGMENT_LIMIT);
 
   const sessionLabel = request.sessionTitle
     ? `"${request.sessionTitle}"`
     : 'this session';
 
-  const notes = selectSegments(request.notes, SUMMARIZE_NOTE_LIMIT) ?? [];
+  const notes = takeAcross(request.notes, SUMMARIZE_NOTE_LIMIT);
   const notesText = notes
-    .map((n) => `[${n.type.toUpperCase()}] ${n.content}`)
+    .map((n) => `[${n.type.toUpperCase()}${n.id ? ` id=${n.id}` : ''}] ${n.content}`)
     .join('\n') || '(none)';
 
   const transcriptLines = transcriptSegments
@@ -94,14 +79,17 @@ ${notesText}
 ${transcriptSection}
 
 Return exactly this JSON shape (fill in values):
-{"overview":"1-2 sentences","decisions":[],"actionItems":[],"insights":[]}
+{"overview":"1-2 sentences","decisions":[],"actionItems":[],"insights":[],"noteTypes":[],"commitments":[]}
 
 Rules:
 - Prefer the TRANSCRIPT as ground truth. Notes may mis-tag jokes, coaching, or "we should" as tasks.
+- The transcript is in meeting order. Commitments in the middle count.
 - overview: name the subject (project, product, problem) in 1-2 sentences. Never copy filler like "good suggestion", "very doable", "I think so", thanks, or greetings.
 - decisions: only clear choices/agreements/approvals. Prefix "Decided: ". Empty array if none.
 - actionItems: verb-first real tasks only. Include owner or deadline only if spoken. Empty array if none.
 - insights: concrete facts from the transcript (who, what system, what constraint). Not encouragement.
+- noteTypes: only notes whose category should change. Each item is {"id":"<the id= value>","type":"action"|"decision"|"insight"|"summary"}. Omit notes that are already right. Use [] when none change. Do not invent ids.
+- commitments: one item per real task, {"id":"<the id= value>","owner":"Name or null","deadline":"when it is due, or null"}. Use null when that part was not said. Do not invent a person or a date. Omit notes that are not tasks.
 - Prefer fewer, better items over a long unfaithful list
 - no invented facts, owners, or deadlines`;
 
@@ -165,7 +153,7 @@ function polishSummary(shape: SummaryJsonShape, request: SummarizeRequest): Summ
 }
 
 /** Extract JSON from model output — handles fences, preamble, and chain-of-thought. */
-function tryParseSummaryJson(rawText: string): SummaryJsonShape | null {
+function tryParseSummaryJson(rawText: string): { shape: SummaryJsonShape; noteCorrections: NoteTypeCorrection[]; commitments: NoteCommitmentUpdate[] } | null {
   const candidates: string[] = [];
 
   const trimmed = rawText.trim();
@@ -190,7 +178,11 @@ function tryParseSummaryJson(rawText: string): SummaryJsonShape | null {
     try {
       const parsed = JSON.parse(candidate) as unknown;
       if (isSummaryJsonShape(parsed)) {
-        return normalizeSummaryShape(parsed);
+        return {
+          shape: normalizeSummaryShape(parsed),
+          noteCorrections: parseNoteCorrections(parsed),
+          commitments: parseCommitments(parsed),
+        };
       }
     } catch {
       // try next candidate
@@ -228,16 +220,26 @@ function buildFallbackSummary(request: SummarizeRequest): SummaryJsonShape {
   }), request);
 }
 
-function parseResponse(rawText: string, request: SummarizeRequest): { shape: SummaryJsonShape; fromFallback: boolean } {
+function parseResponse(
+  rawText: string,
+  request: SummarizeRequest,
+): { shape: SummaryJsonShape; noteCorrections: NoteTypeCorrection[]; commitments: NoteCommitmentUpdate[]; fromFallback: boolean } {
   const parsed = tryParseSummaryJson(rawText);
-  if (parsed) return { shape: polishSummary(parsed, request), fromFallback: false };
+  if (parsed) {
+    return {
+      shape: polishSummary(parsed.shape, request),
+      noteCorrections: parsed.noteCorrections,
+      commitments: parsed.commitments,
+      fromFallback: false,
+    };
+  }
 
   logger.warn(
     { sessionId: request.sessionId, raw: rawText.slice(0, 200) },
     'NVIDIA NIM returned non-JSON summary; using note-based fallback',
   );
 
-  return { shape: buildFallbackSummary(request), fromFallback: true };
+  return { shape: buildFallbackSummary(request), noteCorrections: [], commitments: [], fromFallback: true };
 }
 
 // ─── Service ──────────────────────────────────────────────────────────────────
@@ -260,7 +262,7 @@ export class NvidiaLlmService {
     });
   }
 
-  async summariseSession(request: SummarizeRequest): Promise<AiSummary> {
+  async summariseSession(request: SummarizeRequest): Promise<SummarizeResult> {
     const startedAt = Date.now();
     const sourceWords = [
       ...request.notes.map((n) => n.content),
@@ -291,6 +293,8 @@ export class NvidiaLlmService {
         insights:    [],
         modelUsed:   'skipped',
         generatedAt: new Date().toISOString(),
+        noteCorrections: [],
+        commitments: [],
       };
     }
 
@@ -348,12 +352,14 @@ export class NvidiaLlmService {
         insights:    parsed.insights,
         modelUsed:   'fallback',
         generatedAt: new Date().toISOString(),
+        noteCorrections: [],
+        commitments: [],
       };
     }
 
-    const { shape: parsed, fromFallback } = parseResponse(rawText, request);
+    const { shape: parsed, noteCorrections, commitments, fromFallback } = parseResponse(rawText, request);
 
-    const summary: AiSummary = {
+    const summary: SummarizeResult = {
       id:          uuidv4(),
       sessionId:   request.sessionId,
       overview:    parsed.overview,
@@ -362,6 +368,8 @@ export class NvidiaLlmService {
       insights:    parsed.insights,
       modelUsed:   fromFallback ? 'fallback' : MODEL,
       generatedAt: new Date().toISOString(),
+      noteCorrections,
+      commitments,
     };
 
     logger.info(
@@ -401,22 +409,6 @@ export class NvidiaLlmService {
       return `${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
     };
 
-    const noteLines = request.notes.map((n, i) => {
-      const time = new Date(n.capturedAt).toLocaleTimeString('en-US', {
-        hour: 'numeric', minute: '2-digit',
-      });
-      return `[${i + 1}] ${n.type.toUpperCase()}: ${n.content} (${time})`;
-    });
-
-    const segmentOffset = request.notes.length;
-    const segmentLines = request.transcriptSegments.map((s, i) => {
-      const label = s.id === '__live__'
-        ? 'LIVE (in progress)'
-        : `TRANSCRIPT ${fmt(s.startOffsetSeconds)}`;
-      return `[${segmentOffset + i + 1}] ${label}: ${s.text}`;
-    });
-
-    const allSources = [...noteLines, ...segmentLines].join('\n');
     const sourceWords = [
       ...request.notes.map((n) => n.content),
       ...request.transcriptSegments.map((s) => s.text),
@@ -429,6 +421,27 @@ export class NvidiaLlmService {
         citations: [],
       };
     }
+
+    const selected = selectChatContext(request.notes, request.transcriptSegments, request.question);
+    const notes = selected.notes;
+    const transcriptSegments = selected.transcriptSegments;
+
+    const noteLines = notes.map((n, i) => {
+      const time = new Date(n.capturedAt).toLocaleTimeString('en-US', {
+        hour: 'numeric', minute: '2-digit',
+      });
+      return `[${i + 1}] ${n.type.toUpperCase()}: ${n.content} (${time})`;
+    });
+
+    const segmentOffset = notes.length;
+    const segmentLines = transcriptSegments.map((s, i) => {
+      const label = s.id === '__live__'
+        ? 'LIVE (in progress)'
+        : `TRANSCRIPT ${fmt(s.startOffsetSeconds)}`;
+      return `[${segmentOffset + i + 1}] ${label}: ${s.text}`;
+    });
+
+    const allSources = [...noteLines, ...segmentLines].join('\n');
 
     // ── Prompt — JSON-only output prevents chain-of-thought from leaking ─────
     // Nemotron reasons internally; asking for free-form text causes it to write
@@ -450,11 +463,16 @@ export class NvidiaLlmService {
       '- Notes tagged ACTION are auto-classified from speech and may be figurative advice, not real assignments.\n' +
       '- If the sources are only greetings, fragments, or unclear speech, say the session did not capture enough speech. Do not invent topics.\n' +
       '- Do NOT invent owners, responsibilities, or deadlines unless explicitly stated in the sources.\n' +
-      '- For "who is responsible" questions about rhetorical advice, say the speaker is addressing the audience; do not name a person unless named in sources.\n\n' +
-      'Respond with ONLY this JSON object — no other text:\n' +
+      '- For "who is responsible" questions about rhetorical advice, say the speaker is addressing the audience; do not name a person unless named in sources.\n' +
+      (selected.retrieved
+        ? '- This recording is longer than the prompt. These sources are the passages kept for this question, in time order. If the answer is not in them, say you cannot find it in the passages kept for this question.\n'
+        : '') +
+      '\nRespond with ONLY this JSON object — no other text:\n' +
       '{"answer":"1-3 sentence answer.","used":[1,3]}\n\n' +
       'If the sources are too thin to answer: {"answer":"This session did not capture enough speech to answer that.","used":[]}\n' +
-      'If the answer is not in otherwise usable sources: {"answer":"Not mentioned in this session.","used":[]}\n\n' +
+      (selected.retrieved
+        ? 'If the answer is not in these passages: {"answer":"I cannot find that in the passages kept for this question.","used":[]}\n\n'
+        : 'If the answer is not in otherwise usable sources: {"answer":"Not mentioned in this session.","used":[]}\n\n') +
       'No preamble. No explanation. No thinking. JSON only.';
 
     const historyMessages = request.history
@@ -466,7 +484,13 @@ export class NvidiaLlmService {
 
     const startedAt = Date.now();
     logger.info(
-      { noteCount: request.notes.length, segmentCount: request.transcriptSegments.length },
+      {
+        noteCount: request.notes.length,
+        segmentCount: request.transcriptSegments.length,
+        sentNotes: notes.length,
+        sentSegments: transcriptSegments.length,
+        retrieved: selected.retrieved,
+      },
       'Chat: calling NVIDIA NIM',
     );
 
@@ -534,8 +558,8 @@ export class NvidiaLlmService {
     for (const idx of usedIndexes) {
       if (idx < 1) continue;
 
-      if (idx <= request.notes.length) {
-        const note = request.notes[idx - 1];
+      if (idx <= notes.length) {
+        const note = notes[idx - 1];
         if (note) {
           const noteType = note.type as ChatCitation['noteType'];
           citations.push({
@@ -548,8 +572,8 @@ export class NvidiaLlmService {
           });
         }
       } else {
-        const segIdx = idx - request.notes.length - 1;
-        const seg = request.transcriptSegments[segIdx];
+        const segIdx = idx - notes.length - 1;
+        const seg = transcriptSegments[segIdx];
         if (seg) {
           citations.push({
             index: idx,

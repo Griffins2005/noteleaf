@@ -3,6 +3,8 @@
  * @description POST /api/chat/ask — "Ask my notes" session-scoped chatbot.
  *
  * Answers are grounded in notes + transcript sent by the client.
+ * A meeting that fits goes to the model whole. A longer one is reduced to
+ * the passages that match the question before the model sees it.
  * Each Q&A turn is appended to session.chat_messages in the database.
  */
 
@@ -25,13 +27,13 @@ const askSchema = z.object({
     type:       z.string(),
     content:    z.string().min(1).max(100_000),
     capturedAt: z.string(),
-  })).max(200),
+  })).max(2_000),
   transcriptSegments: z.array(z.object({
     id:                 z.string(),
     text:               z.string().min(1).max(100_000),
     startOffsetSeconds: z.number().nonnegative(),
     endOffsetSeconds:   z.number().nonnegative(),
-  })).max(500),
+  })).max(8_000),
   history: z.array(z.object({
     role:    z.enum(['user', 'assistant']),
     content: z.string().max(2000),
@@ -49,6 +51,7 @@ function parseStoredMessages(raw: unknown): ChatMessage[] {
 export async function chatRoute(fastify: FastifyInstance): Promise<void> {
   fastify.post<{ Body: AskNotesRequest }>(
     '/chat/ask',
+    { bodyLimit: 4 * 1024 * 1024 },
     async (request, reply): Promise<ApiResponse<AskNotesResponse>> => {
       const userUuid = await requireAuth(request, reply);
       if (!userUuid) return reply as unknown as ApiResponse<AskNotesResponse>;

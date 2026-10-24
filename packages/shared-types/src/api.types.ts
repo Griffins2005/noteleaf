@@ -13,7 +13,7 @@
  */
 
 import type { Session, SessionListItem, AiSummary, TranscriptSegment, UpdateSessionPayload } from './session.types.js';
-import type { Note } from './note.types.js';
+import type { Note, NoteType } from './note.types.js';
 
 // ─── Response envelope ────────────────────────────────────────────────────────
 
@@ -75,19 +75,40 @@ export type AddNotesResponse = ApiResponse<Note[]>;
 
 // ─── AI summarize API ─────────────────────────────────────────────────────────
 
+/** A category fix for a note that already exists. The note id does not change. */
+export interface NoteTypeCorrection {
+  id: string;
+  type: NoteType;
+}
+
+/** Owner and deadline for a note that is a real task. Null means it was not said. */
+export interface NoteCommitmentUpdate {
+  id: string;
+  owner: string | null;
+  deadline: string | null;
+}
+
 /** POST /api/ai/summarize — generate an AI summary for a session */
 export interface SummarizeRequest {
   sessionId: string;
-  /** Raw notes passed as context alongside the transcript. */
-  notes: Pick<Note, 'type' | 'content' | 'capturedAt'>[];
-  /** Head+tail transcript excerpt (up to ~4000 chars) for recap context. */
+  /** Notes in meeting order. id lets the recap correct a category in place. */
+  notes: Array<Pick<Note, 'type' | 'content' | 'capturedAt'> & { id?: string }>;
+  /** Full transcript when it fits. Empty when timed segments already carry it. */
   transcriptExcerpt: string;
-  /** Timestamped transcript snippets for temporal context. */
+  /** Timestamped transcript lines in meeting order. */
   transcriptSegments?: Pick<TranscriptSegment, 'text' | 'startOffsetSeconds' | 'endOffsetSeconds'>[];
   /** The session title, if set. Provides context for the summary overview. */
   sessionTitle?: string;
 }
-export type SummarizeResponse = ApiResponse<AiSummary>;
+
+export interface SummarizeResult extends AiSummary {
+  /** Categories corrected from the transcript. Empty when the live tags were kept. */
+  noteCorrections: NoteTypeCorrection[];
+  /** Tasks found on existing notes. Empty when none were named. */
+  commitments: NoteCommitmentUpdate[];
+}
+
+export type SummarizeResponse = ApiResponse<SummarizeResult>;
 
 // ─── STT WebSocket messages ───────────────────────────────────────────────────
 

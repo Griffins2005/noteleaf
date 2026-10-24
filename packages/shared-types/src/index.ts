@@ -20,6 +20,7 @@ export { defaultUserPreferences } from './user.types.js';
 export type {
   // Note domain
   NoteType,
+  NoteCommitment,
   Note,
   ClassifierInput,
   ClassifierOutput,
@@ -50,6 +51,9 @@ export type {
   AddNotesRequest,
   AddNotesResponse,
   SummarizeRequest,
+  SummarizeResult,
+  NoteTypeCorrection,
+  NoteCommitmentUpdate,
   SummarizeResponse,
   ClientToServerWsMessage,
   ServerToClientWsMessage,

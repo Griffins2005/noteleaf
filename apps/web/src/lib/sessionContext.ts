@@ -6,18 +6,37 @@
 import type { Note, TranscriptSegment } from '@noteleaf/shared-types';
 import { hasEnoughSessionContent, isFillerSpeech } from './speechQuality';
 
-export const SUMMARIZE_EXCERPT_CHARS = 4000;
-export const SUMMARIZE_SEGMENT_LIMIT = 40;
-export const SUMMARIZE_NOTE_LIMIT = 40;
+export const SUMMARIZE_EXCERPT_CHARS = 100_000;
+export const SUMMARIZE_SEGMENT_LIMIT = 500;
+export const SUMMARIZE_NOTE_LIMIT = 500;
+
+/** Under the cap, keep every item in order. Over it, sample across the whole list. */
+export function takeAcross<T>(items: T[], max: number): T[] {
+  if (max < 1) return [];
+  if (items.length <= max) return items;
+
+  const selected: T[] = [];
+  const used = new Set<number>();
+  const step = (items.length - 1) / Math.max(max - 1, 1);
+
+  for (let i = 0; i < max; i++) {
+    const index = Math.min(items.length - 1, Math.round(i * step));
+    if (used.has(index)) continue;
+    used.add(index);
+    const item = items[index];
+    if (item !== undefined) selected.push(item);
+  }
+
+  return selected;
+}
 
 export function notesForSummarize(notes: Note[]) {
-  const cleaned = notes.filter((n) => n.content.trim().length > 0);
-  const selected =
-    cleaned.length <= SUMMARIZE_NOTE_LIMIT
-      ? cleaned
-      : [...cleaned.slice(0, 8), ...cleaned.slice(-(SUMMARIZE_NOTE_LIMIT - 8))];
+  const cleaned = notes
+    .filter((n) => n.content.trim().length > 0 && !isFillerSpeech(n.content))
+    .sort((a, b) => a.sessionOffsetSeconds - b.sessionOffsetSeconds || a.capturedAt.localeCompare(b.capturedAt));
 
-  return selected.map((n) => ({
+  return takeAcross(cleaned, SUMMARIZE_NOTE_LIMIT).map((n) => ({
+    id: n.id,
     type: n.type,
     content: n.content.trim(),
     capturedAt: n.capturedAt,
@@ -34,28 +53,26 @@ export function segmentsForSummarize(segments: TranscriptSegment[]) {
     }));
 }
 
-/** Keep opening context and the latest discussion when the transcript is long. */
+/** Whole transcript when it fits. Opening, middle, and end when it does not. */
 export function excerptTranscript(transcript: string, max = SUMMARIZE_EXCERPT_CHARS): string {
   const t = transcript.trim().replace(/\s+/g, ' ');
   if (t.length <= max) return t;
-  const ellipsis = ' … ';
-  const budget = max - ellipsis.length;
-  const head = Math.floor(budget * 0.4);
-  const tail = budget - head;
-  return `${t.slice(0, head).trimEnd()}${ellipsis}${t.slice(-tail).trimStart()}`;
+
+  const marker = ' … ';
+  const third = Math.max(1, Math.floor((max - marker.length * 2) / 3));
+  const mid = Math.max(0, Math.floor(t.length / 2 - third / 2));
+  return `${t.slice(0, third).trimEnd()}${marker}${t.slice(mid, mid + third).trim()}${marker}${t.slice(-third).trimStart()}`;
 }
 
-/** First few segments for setup, last segments for what was actually decided. */
+/** Timed lines in meeting order. A very long meeting is sampled across its full length. */
 export function selectSegmentsForSummarize(
   segments: TranscriptSegment[],
   max = SUMMARIZE_SEGMENT_LIMIT,
 ) {
-  const cleaned = segmentsForSummarize(segments);
-  if (cleaned.length <= max) return cleaned;
-  const headCount = Math.min(8, max);
-  const tailCount = max - headCount;
-  const tailStart = Math.max(headCount, cleaned.length - tailCount);
-  return [...cleaned.slice(0, headCount), ...cleaned.slice(tailStart)];
+  const cleaned = segmentsForSummarize(segments)
+    .slice()
+    .sort((a, b) => a.startOffsetSeconds - b.startOffsetSeconds);
+  return takeAcross(cleaned, max);
 }
 
 /** Always send transcript with notes — auto-tagged notes alone starve the recap. */
@@ -65,10 +82,11 @@ export function buildSummarizePayload(
   transcriptSegments: TranscriptSegment[],
 ) {
   const usableSegments = transcriptSegments.filter((s) => !isFillerSpeech(s.text));
+  const transcriptSegmentsForRecap = selectSegmentsForSummarize(usableSegments);
   return {
-    notes: notesForSummarize(notes).filter((n) => !isFillerSpeech(n.content)),
-    transcriptExcerpt: excerptTranscript(transcript),
-    transcriptSegments: selectSegmentsForSummarize(usableSegments),
+    notes: notesForSummarize(notes),
+    transcriptExcerpt: transcriptSegmentsForRecap.length > 0 ? '' : excerptTranscript(transcript),
+    transcriptSegments: transcriptSegmentsForRecap,
   };
 }
 
