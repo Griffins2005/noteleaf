@@ -3,6 +3,8 @@
 import { useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
+import { TERMS_VERSION } from '@noteleaf/shared-types';
+import { TermsAcceptance } from '@/components/auth/TermsAcceptance';
 import { useAuthStore } from '@/store/auth.store';
 
 function BootScreen() {
@@ -36,6 +38,10 @@ export function HomeApp() {
 
   if (!isInitialized || !user) {
     return <BootScreen />;
+  }
+
+  if (user.termsAcceptedVersion !== TERMS_VERSION) {
+    return <TermsAcceptance />;
   }
 
   return <NotepadShell />;

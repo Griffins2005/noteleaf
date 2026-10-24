@@ -15,7 +15,7 @@ export type {
   UserPreferences,
 } from './user.types.js';
 
-export { defaultUserPreferences } from './user.types.js';
+export { defaultUserPreferences, TERMS_VERSION } from './user.types.js';
 
 export type {
   // Note domain

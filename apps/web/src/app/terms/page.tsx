@@ -25,7 +25,7 @@ function Rule({ heading, body }: { heading: string; body: string }) {
 
 export default function TermsPage() {
   const router  = useRouter();
-  const updated = 'September 30, 2026';
+  const updated = 'October 23, 2026';
 
   return (
     <div className="min-h-screen bg-[var(--nl-color-paper-bg)]">
@@ -55,7 +55,7 @@ export default function TermsPage() {
             Terms &amp; Privacy
           </h1>
           <p className="text-[13px] font-sans text-[var(--nl-color-ink-tertiary)] leading-relaxed">
-            Your notes are private. Audio stays on this device. Nothing is sold.
+            Your notes are private. Audio is sent to be transcribed and is not kept as a recording. Nothing is sold.
           </p>
         </div>
 
@@ -78,18 +78,18 @@ export default function TermsPage() {
           />
           <Rule
             heading="Changes"
-            body="We might update these terms. The date at the top tells you when. Continued use means you're fine with the changes."
+            body="We might update these terms. The date at the top tells you when. If the changes matter, Noteleaf asks you to agree again before the notepad opens."
           />
         </Section>
 
         <Section title="Privacy Policy">
           <Rule
             heading="What we collect"
-            body="Your email, the notes and transcripts from your sessions, and any summaries you generate. While you record, microphone audio is streamed to Noteleaf's speech service so it can be transcribed. Noteleaf does not store that audio. We also collect cookieless page-view and performance metrics on the web app so we can see what is slow or broken."
+            body="Your email, the notes and transcripts from your sessions, and any summaries you generate. While you record, microphone audio is streamed to Noteleaf's speech service so it can be transcribed. Noteleaf does not keep that recording. Audio that has not been transcribed yet can stay in this browser until it is transcribed or you dismiss it. If the speech service cannot be reached, the browser's own recognizer may be used, which can send audio to that browser's speech service, and the app tells you when that happens. We also collect cookieless page-view and performance metrics on the web app so we can see what is slow or broken."
           />
           <Rule
             heading="What we never do"
-            body="We don't sell your data. Audio is sent only so it can be transcribed, and we don't keep the recording. Your notes and transcripts stay in your account."
+            body="We don't sell your data. Audio is sent only so it can be transcribed, and we don't keep the recording on our servers. Your notes and transcripts stay in your account."
           />
           <Rule
             heading="Third parties"

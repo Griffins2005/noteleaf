@@ -119,7 +119,7 @@ export function SignInPage() {
       });
 
       const json = (await res.json()) as ApiResp<{
-        user: { id: string; email: string | null; name: string | null };
+        user: { id: string; email: string | null; name: string | null; termsAcceptedVersion?: string | null };
         tokenExpiresAt: number;
       }>;
 
@@ -290,8 +290,8 @@ export function SignInPage() {
             </div>
 
             <p className="mt-7 text-[11px] font-mono text-[var(--nl-color-ink-disabled)] leading-relaxed">
-              Audio is transcribed on this device and never stored. Your notes are private and never sold.
-              By signing in you agree to our{' '}
+              Audio is sent to be transcribed and is not kept as a recording. Your notes are private and never sold.
+              Before the notepad opens, you'll be asked to agree to our{' '}
               <Link href="/terms" className="underline hover:text-[var(--nl-color-ink-tertiary)] transition-colors">
                 Terms &amp; Privacy Policy
               </Link>

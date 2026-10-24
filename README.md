@@ -31,7 +31,7 @@ Noteleaf captures microphone audio and streams it to NVIDIA speech recognition t
 
 The browser's speech recognizer is only a fallback when the speech service cannot be reached. That fallback is labeled in the app. Its timestamps are approximate.
 
-> **Audio is sent to Noteleaf's speech service for transcription and is not stored.** Noteleaf keeps the transcript and the notes. A short in-memory buffer exists only so a dropped connection can be retried, and it is discarded when the session ends.
+> **Audio is sent to Noteleaf's speech service for transcription and is not kept as a recording.** Noteleaf keeps the transcript and the notes. Audio that has not been transcribed yet stays in this browser so a dropped connection or a closed tab can be retried. It is removed when that audio is transcribed or you dismiss it.
 
 ### 3. Every sentence is automatically classified
 
@@ -48,7 +48,7 @@ Classification runs instantly in the browser with zero server round-trip. The no
 
 ### 4. After recording stops, an AI recap is generated automatically
 
-When you press stop, Noteleaf sends all captured notes and a portion of the raw transcript to **NVIDIA Nemotron 3 Super** via the Noteleaf API. The model returns a structured recap with overview, decisions, action items, and insights. The NVIDIA key never reaches the browser — all AI calls are proxied through the API server.
+When you press stop, Noteleaf sends the notes and the transcript to **NVIDIA Nemotron 3 Super** via the Noteleaf API. A meeting that fits is sent from start to finish. A longer one is sampled across the whole meeting, including the middle. The model returns a structured recap with overview, decisions, action items, and insights, and it can correct a note's category or add an owner and a deadline when those were said. The NVIDIA key never reaches the browser — all AI calls are proxied through the API server.
 
 ### 5. Ask my notes — live or after the meeting
 
@@ -130,7 +130,7 @@ Click the gear icon at the bottom of the sidebar.
 
 ## What Noteleaf does not do
 
-**It does not keep audio files.** Audio is streamed for transcription and discarded. Only the transcript and notes are stored.
+**It does not keep audio files.** Audio is streamed for transcription. The server does not keep the recording. Audio that has not been transcribed yet can stay in this browser until it is transcribed or you dismiss it. Only the transcript and notes are saved to your account.
 
 **It does not identify speakers.** All speech is captured as one stream.
 
@@ -350,7 +350,7 @@ Browser microphone
     │
     ▼
 PCM capture (16 kHz mono)
-  In-memory replay buffer — discarded when the session ends
+  Browser replay buffer — kept until that audio is transcribed or dismissed
     │
     ▼
 WebSocket /api/stt/stream → NVIDIA speech recognition
@@ -384,7 +384,7 @@ POST /api/ai/summarize
     ▼
 NVIDIA Nemotron 3 Super 120B
   temperature=0 · JSON output
-  Returns: { overview, decisions, actionItems, insights }
+  Returns: { overview, decisions, actionItems, insights, noteTypes, commitments }
     │
     ▼
 API persists AiSummary to PostgreSQL
@@ -458,7 +458,7 @@ React Query is the source of truth for server data. Zustand `session.store` hold
 
 ### Key design decisions
 
-**Streaming speech recognition** — Audio is sent to NVIDIA through the Noteleaf API so the transcript can keep up with the meeting and carry real timestamps. Audio is not stored. The browser recognizer is a labeled fallback, not the source of the transcript.
+**Streaming speech recognition** — Audio is sent to NVIDIA through the Noteleaf API so the transcript can keep up with the meeting and carry real timestamps. The recording is not kept. Audio that has not been transcribed yet can stay in the browser until it is transcribed or dismissed. The browser recognizer is a labeled fallback, not the source of the transcript.
 
 **JWT + refresh token auth instead of UUID-only** — Proper revocation on sign-out and account deletion. UUID-only credentials had no way to invalidate a compromised token.
 

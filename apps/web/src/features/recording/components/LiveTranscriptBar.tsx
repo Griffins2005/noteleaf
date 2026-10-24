@@ -47,7 +47,7 @@ export function LiveTranscriptBar({ transcript, status, showTranscript, classNam
             Transcription active
           </span>
           <span className="text-[10px] font-mono text-[var(--nl-color-ink-disabled)] hidden sm:inline">
-            · audio stays on your device
+            · sent to transcribe, not kept
           </span>
         </div>
         {showTranscript ? (

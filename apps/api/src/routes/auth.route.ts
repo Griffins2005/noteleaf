@@ -9,6 +9,7 @@
  *   POST /api/auth/email/verify    → Verify OTP (max 5 attempts), set auth cookies
  *   POST /api/auth/refresh         → Rotate refresh token cookie, issue new access token cookie
  *   POST /api/auth/signout         → Revoke refresh token, clear auth cookies
+ *   POST /api/auth/terms           → Record agreement to the current terms
  *   GET  /api/auth/me              → Return current user from cookie or Bearer token
  *
  * Token storage:
@@ -43,6 +44,7 @@ import {
 } from '../lib/auth.js';
 import { logger } from '../logger.js';
 import { purgeExpiredSessionsForUser } from '../services/retention.service.js';
+import { TERMS_VERSION } from '@noteleaf/shared-types';
 import type { PrismaClient } from '@prisma/client';
 
 // Config
@@ -120,10 +122,21 @@ const userPrefsSchema   = z.object({
 type Db = PrismaClient;
 
 interface UserRecord {
-  id:     string;
-  email:  string | null;
-  name:   string | null;
-  avatar: string | null;
+  id:                    string;
+  email:                 string | null;
+  name:                  string | null;
+  avatar:                string | null;
+  termsAcceptedVersion:  string | null;
+}
+
+function authUserPayload(user: UserRecord) {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    avatar: user.avatar,
+    termsAcceptedVersion: user.termsAcceptedVersion,
+  };
 }
 
 function generateCode(): string {
@@ -473,7 +486,7 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
     return {
       success: true,
       data: {
-        user: { id: user.id, email: user.email, name: user.name },
+        user: authUserPayload(user),
         tokenExpiresAt: Date.now() + ACCESS_TOKEN_TTL_MS,
       },
       timestamp: new Date().toISOString(),
@@ -536,7 +549,7 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
     return {
       success: true,
       data: {
-        user: { id: user.id, email: user.email, name: user.name },
+        user: authUserPayload(user),
         tokenExpiresAt: Date.now() + ACCESS_TOKEN_TTL_MS,
       },
       timestamp: new Date().toISOString(),
@@ -640,6 +653,34 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
     },
   );
 
+  // POST /api/auth/terms
+  // Records that this person agreed to the current terms. A different version is rejected.
+
+  fastify.post('/auth/terms', async (request, reply) => {
+    const userId = await requireAuth(request, reply);
+    if (!userId) return;
+
+    const parsed = z.object({ version: z.literal(TERMS_VERSION) }).safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        success: false,
+        error: { code: 'TERMS_OUTDATED', message: 'These terms have changed. Read them again and agree to continue.' },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    const updated = await fastify.db.user.update({
+      where: { id: userId },
+      data: { termsAcceptedVersion: TERMS_VERSION },
+    });
+
+    return {
+      success: true,
+      data: { termsAcceptedVersion: updated.termsAcceptedVersion },
+      timestamp: new Date().toISOString(),
+    };
+  });
+
   // GET /api/auth/me
   // Returns the current user from the access token cookie (or Bearer header).
   // Also returns tokenExpiresAt so the client can schedule a proactive refresh.
@@ -673,12 +714,13 @@ export async function authRoute(fastify: FastifyInstance): Promise<void> {
       return {
         success: true,
         data: {
-          id:             user.id,
-          email:          user.email,
-          name:           user.name,
-          avatar:         user.avatar,
-          retentionDays:  user.retentionDays,
-          tokenExpiresAt: exp ? exp * 1000 : Date.now() + ACCESS_TOKEN_TTL_MS,
+          id:                    user.id,
+          email:                 user.email,
+          name:                  user.name,
+          avatar:                user.avatar,
+          retentionDays:         user.retentionDays,
+          termsAcceptedVersion:  user.termsAcceptedVersion,
+          tokenExpiresAt:        exp ? exp * 1000 : Date.now() + ACCESS_TOKEN_TTL_MS,
         },
         timestamp: new Date().toISOString(),
       };

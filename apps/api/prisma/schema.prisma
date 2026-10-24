@@ -23,7 +23,8 @@ model User {
   name          String?
   avatar        String?
   googleId      String?  @unique @map("google_id")
-  retentionDays Int?     @map("retention_days")
+  retentionDays        Int?     @map("retention_days")
+  termsAcceptedVersion String?  @map("terms_accepted_version")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt      @map("updated_at")

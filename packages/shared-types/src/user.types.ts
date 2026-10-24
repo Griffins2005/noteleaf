@@ -1,7 +1,12 @@
 /**
  * @file user.types.ts
  * @description User preferences types.
+ *
+ * TERMS_VERSION is the terms a person must agree to. Bump it when the
+ * terms change enough that agreement has to be given again.
  */
+
+export const TERMS_VERSION = '2026-10-23';
 
 // ─── Preferences ─────────────────────────────────────────────────────────────
 

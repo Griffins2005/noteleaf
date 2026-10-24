@@ -10,7 +10,7 @@ const PHASES = [
   {
     label: 'During',
     title: 'Talk. Notes appear.',
-    detail: 'Tap the mic. Speech is transcribed on this device — the audio is never stored.',
+    detail: 'Tap the mic. Speech is sent to be transcribed. The recording is not kept.',
   },
   {
     label: 'After',
@@ -151,7 +151,7 @@ export function AuthProductIntro({ className }: { className?: string }) {
             AI captures meeting notes from your mic — on calls or in person. No bot joins your meeting.
           </p>
           <p className="text-[12px] font-mono leading-relaxed text-emerald-200/85 max-w-[44ch]">
-            Audio is transcribed on this device and never stored.
+            Audio is sent to be transcribed and is not kept as a recording.
           </p>
         </div>
 
@@ -172,7 +172,7 @@ export function AuthProductIntro({ className }: { className?: string }) {
         </ol>
 
         <p className="text-[11px] font-mono leading-relaxed text-[var(--nl-sidebar-text-muted)]">
-          Only the notes and transcript are saved to your account. The recording itself is never written or uploaded.
+          Only the notes and transcript are saved to your account. The recording is not kept. Audio that has not been transcribed yet can stay in this browser until it is.
         </p>
       </div>
     </section>

@@ -4,6 +4,7 @@
 // A proactive refresh fires 60 seconds before the access token expires.
 
 import { create } from 'zustand';
+import { TERMS_VERSION } from '@noteleaf/shared-types';
 import { useUserStore } from './user.store';
 
 export interface AuthUser {
@@ -11,6 +12,8 @@ export interface AuthUser {
   email:  string | null;
   name:   string | null;
   avatar?: string | null;
+  /** Null until this person agrees to the current terms. */
+  termsAcceptedVersion?: string | null;
 }
 
 interface AuthState {
@@ -25,6 +28,7 @@ interface AuthActions {
   clearAuth:          () => void;
   refreshAccessToken: () => Promise<boolean>;
   signOut:            () => Promise<void>;
+  acceptTerms:        () => Promise<void>;
 }
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -51,7 +55,8 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
           success: boolean;
           data?: {
             id: string; email: string | null; name: string | null;
-            avatar?: string | null; retentionDays?: number | null; tokenExpiresAt: number;
+            avatar?: string | null; retentionDays?: number | null;
+            termsAcceptedVersion?: string | null; tokenExpiresAt: number;
           };
         };
 
@@ -94,6 +99,22 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     clearAuth();
   },
 
+  acceptTerms: async () => {
+    const res = await fetch('/api/auth/terms', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: TERMS_VERSION }),
+    });
+    if (!res.ok) {
+      throw new Error('Could not save your agreement. Try again.');
+    }
+    const current = get().user;
+    if (current) {
+      set({ user: { ...current, termsAcceptedVersion: TERMS_VERSION } });
+    }
+  },
+
   refreshAccessToken: async () => {
     const { setAuth, clearAuth } = get();
     try {
@@ -107,7 +128,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       const json = (await res.json()) as {
         success: boolean;
         data?: {
-          user: { id: string; email: string | null; name: string | null };
+          user: AuthUser;
           tokenExpiresAt: number;
         };
       };
