@@ -17,6 +17,13 @@ interface TimelineChunk {
   pcmBase64: string;
 }
 
+export interface PcmTimelineSnapshot {
+  chunks: TimelineChunk[];
+  nextStartMs: number;
+  finalizedThroughMs: number;
+  sentThroughMs: number;
+}
+
 export function pcmDurationMs(byteLength: number): number {
   if (byteLength <= 0) return 0;
   return byteLength / PCM_BYTES_PER_MS;
@@ -108,4 +115,25 @@ export class PcmTimeline {
   markSent(endMs: number): void {
     if (endMs > this.sentThroughMs) this.sentThroughMs = endMs;
   }
+
+  snapshot(): PcmTimelineSnapshot {
+    return {
+      chunks: this.chunks.map((chunk) => ({ ...chunk })),
+      nextStartMs: this.nextStartMs,
+      finalizedThroughMs: this.finalizedThroughMs,
+      sentThroughMs: this.sentThroughMs,
+    };
+  }
+
+  /** Restore audio that never received a final. Replay starts at the finalized cursor. */
+  restore(snapshot: PcmTimelineSnapshot): void {
+    this.chunks = snapshot.chunks.map((chunk) => ({ ...chunk }));
+    this.nextStartMs = snapshot.nextStartMs;
+    this.finalizedThroughMs = snapshot.finalizedThroughMs;
+    this.sentThroughMs = snapshot.finalizedThroughMs;
+  }
+}
+
+export function untranscribedMs(snapshot: PcmTimelineSnapshot): number {
+  return Math.max(0, snapshot.nextStartMs - snapshot.finalizedThroughMs);
 }

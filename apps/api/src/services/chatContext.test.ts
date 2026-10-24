@@ -53,6 +53,28 @@ describe('selectChatContext', () => {
     expect(selected.transcriptSegments.length).toBeLessThan(filler.length);
   });
 
+  it('keeps a named topic inside a what-happened question', () => {
+    const filler = Array.from({ length: 40 }, (_, i) => segment('the weather is sunny on the hill', i * 5));
+    const meeting = [
+      ...filler.slice(0, 20),
+      segment('we will ship the navy theme on thursday', 100),
+      ...filler.slice(20),
+    ];
+    const selected = selectChatContext([], meeting, 'what happened with the navy theme', 500);
+
+    expect(selected.retrieved).toBe(true);
+    expect(selected.transcriptSegments.some((s) => s.text.includes('navy theme'))).toBe(true);
+  });
+
+  it('stays inside the character budget', () => {
+    const segments = Array.from({ length: 40 }, (_, i) => segment(`line-${i} ${'x'.repeat(40)}`, i));
+    const selected = selectChatContext([], segments, 'line-20', 300);
+    const chars = selected.transcriptSegments.reduce((sum, segment) => sum + segment.text.length, 0);
+
+    expect(chars).toBeLessThanOrEqual(300);
+    expect(chars).toBeGreaterThan(0);
+  });
+
   it('samples the opening and the end of a long meeting for a broad question', () => {
     const segments = Array.from({ length: 40 }, (_, i) => segment(`line-${i} xxxxxxxx`, i));
     const selected = selectChatContext([], segments, 'what happened in the meeting', 220);

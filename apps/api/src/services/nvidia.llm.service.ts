@@ -21,6 +21,7 @@ import type { SummarizeRequest, SummarizeResult, AskNotesRequest, AskNotesRespon
 import { logger } from '../logger.js';
 import { selectChatContext } from './chatContext.js';
 import { excerptTranscript, SUMMARIZE_NOTE_LIMIT, SUMMARIZE_SEGMENT_LIMIT, takeAcross } from './meetingWindow.js';
+import { parseCommitments, type NoteCommitmentUpdate } from './commitments.js';
 import { parseNoteCorrections, type NoteTypeCorrection } from './noteCorrections.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -78,7 +79,7 @@ ${notesText}
 ${transcriptSection}
 
 Return exactly this JSON shape (fill in values):
-{"overview":"1-2 sentences","decisions":[],"actionItems":[],"insights":[],"noteTypes":[]}
+{"overview":"1-2 sentences","decisions":[],"actionItems":[],"insights":[],"noteTypes":[],"commitments":[]}
 
 Rules:
 - Prefer the TRANSCRIPT as ground truth. Notes may mis-tag jokes, coaching, or "we should" as tasks.
@@ -88,6 +89,7 @@ Rules:
 - actionItems: verb-first real tasks only. Include owner or deadline only if spoken. Empty array if none.
 - insights: concrete facts from the transcript (who, what system, what constraint). Not encouragement.
 - noteTypes: only notes whose category should change. Each item is {"id":"<the id= value>","type":"action"|"decision"|"insight"|"summary"}. Omit notes that are already right. Use [] when none change. Do not invent ids.
+- commitments: one item per real task, {"id":"<the id= value>","owner":"Name or null","deadline":"when it is due, or null"}. Use null when that part was not said. Do not invent a person or a date. Omit notes that are not tasks.
 - Prefer fewer, better items over a long unfaithful list
 - no invented facts, owners, or deadlines`;
 
@@ -151,7 +153,7 @@ function polishSummary(shape: SummaryJsonShape, request: SummarizeRequest): Summ
 }
 
 /** Extract JSON from model output — handles fences, preamble, and chain-of-thought. */
-function tryParseSummaryJson(rawText: string): { shape: SummaryJsonShape; noteCorrections: NoteTypeCorrection[] } | null {
+function tryParseSummaryJson(rawText: string): { shape: SummaryJsonShape; noteCorrections: NoteTypeCorrection[]; commitments: NoteCommitmentUpdate[] } | null {
   const candidates: string[] = [];
 
   const trimmed = rawText.trim();
@@ -179,6 +181,7 @@ function tryParseSummaryJson(rawText: string): { shape: SummaryJsonShape; noteCo
         return {
           shape: normalizeSummaryShape(parsed),
           noteCorrections: parseNoteCorrections(parsed),
+          commitments: parseCommitments(parsed),
         };
       }
     } catch {
@@ -220,12 +223,13 @@ function buildFallbackSummary(request: SummarizeRequest): SummaryJsonShape {
 function parseResponse(
   rawText: string,
   request: SummarizeRequest,
-): { shape: SummaryJsonShape; noteCorrections: NoteTypeCorrection[]; fromFallback: boolean } {
+): { shape: SummaryJsonShape; noteCorrections: NoteTypeCorrection[]; commitments: NoteCommitmentUpdate[]; fromFallback: boolean } {
   const parsed = tryParseSummaryJson(rawText);
   if (parsed) {
     return {
       shape: polishSummary(parsed.shape, request),
       noteCorrections: parsed.noteCorrections,
+      commitments: parsed.commitments,
       fromFallback: false,
     };
   }
@@ -235,7 +239,7 @@ function parseResponse(
     'NVIDIA NIM returned non-JSON summary; using note-based fallback',
   );
 
-  return { shape: buildFallbackSummary(request), noteCorrections: [], fromFallback: true };
+  return { shape: buildFallbackSummary(request), noteCorrections: [], commitments: [], fromFallback: true };
 }
 
 // ─── Service ──────────────────────────────────────────────────────────────────
@@ -290,6 +294,7 @@ export class NvidiaLlmService {
         modelUsed:   'skipped',
         generatedAt: new Date().toISOString(),
         noteCorrections: [],
+        commitments: [],
       };
     }
 
@@ -348,10 +353,11 @@ export class NvidiaLlmService {
         modelUsed:   'fallback',
         generatedAt: new Date().toISOString(),
         noteCorrections: [],
+        commitments: [],
       };
     }
 
-    const { shape: parsed, noteCorrections, fromFallback } = parseResponse(rawText, request);
+    const { shape: parsed, noteCorrections, commitments, fromFallback } = parseResponse(rawText, request);
 
     const summary: SummarizeResult = {
       id:          uuidv4(),
@@ -363,6 +369,7 @@ export class NvidiaLlmService {
       modelUsed:   fromFallback ? 'fallback' : MODEL,
       generatedAt: new Date().toISOString(),
       noteCorrections,
+      commitments,
     };
 
     logger.info(

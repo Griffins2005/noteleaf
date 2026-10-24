@@ -81,6 +81,13 @@ export interface NoteTypeCorrection {
   type: NoteType;
 }
 
+/** Owner and deadline for a note that is a real task. Null means it was not said. */
+export interface NoteCommitmentUpdate {
+  id: string;
+  owner: string | null;
+  deadline: string | null;
+}
+
 /** POST /api/ai/summarize — generate an AI summary for a session */
 export interface SummarizeRequest {
   sessionId: string;
@@ -97,6 +104,8 @@ export interface SummarizeRequest {
 export interface SummarizeResult extends AiSummary {
   /** Categories corrected from the transcript. Empty when the live tags were kept. */
   noteCorrections: NoteTypeCorrection[];
+  /** Tasks found on existing notes. Empty when none were named. */
+  commitments: NoteCommitmentUpdate[];
 }
 
 export type SummarizeResponse = ApiResponse<SummarizeResult>;

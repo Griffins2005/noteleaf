@@ -32,7 +32,7 @@ interface SessionActions {
   setActiveSessionTitle: (title: string) => void;
   setElapsedSeconds: (seconds: number) => void;
   setActiveSessionDuration: (seconds: number) => void;
-  updateNote: (noteId: string, content: string, type: Note['type']) => void;
+  updateNote: (noteId: string, content: string, type: Note['type'], commitment?: Note['commitment'] | null) => void;
   replaceActiveNotes: (notes: Note[]) => void;
   clearActiveSessionNotes: () => void;
   removeSession: (sessionId: string) => void;
@@ -144,16 +144,22 @@ export const useSessionStore = create<SessionState & SessionActions>()((set) => 
       ),
     })),
 
-  updateNote: (noteId, content, type) =>
+  updateNote: (noteId, content, type, commitment) =>
     set((state) => ({
       activeNotes: state.activeNotes.map((n) => {
         if (n.id !== noteId) return n;
+        const nextCommitment = type !== 'action'
+          ? undefined
+          : commitment === undefined
+            ? n.commitment
+            : commitment ?? undefined;
         return {
           ...n,
           content,
           type,
           isUserEdited: true,
           originalContent: n.originalContent ?? n.content,
+          ...(nextCommitment ? { commitment: nextCommitment } : { commitment: undefined }),
         };
       }),
     })),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PcmTimeline, pcmDurationMs, slicePcmFrom } from '../pcmTimeline';
+import { PcmTimeline, pcmDurationMs, slicePcmFrom, untranscribedMs } from '../pcmTimeline';
 
 function pcmBase64(byteLength: number): string {
   return btoa(String.fromCharCode(...new Uint8Array(byteLength)));
@@ -38,5 +38,20 @@ describe('pcmTimeline', () => {
   it('slices on a sample boundary', () => {
     const sliced = slicePcmFrom(pcmBase64(64), 1);
     expect(Uint8Array.from(atob(sliced), (char) => char.charCodeAt(0)).length).toBe(32);
+  });
+
+  it('restores unfinalized audio and reports how much is still untranscribed', () => {
+    const timeline = new PcmTimeline();
+    timeline.push(pcmBase64(8192), 8192);
+    timeline.push(pcmBase64(8192), 8192);
+    timeline.markFinalized(256);
+    timeline.markSent(512);
+    const saved = timeline.snapshot();
+
+    const restored = new PcmTimeline();
+    restored.restore(saved);
+    expect(untranscribedMs(saved)).toBe(256);
+    expect(restored.unsentPieces()).toHaveLength(1);
+    expect(restored.unsentPieces()[0]?.endMs).toBe(512);
   });
 });

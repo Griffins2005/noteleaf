@@ -49,8 +49,15 @@ function termsOf(text: string): string[] {
   return (text.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []).filter((term) => !STOP.has(term));
 }
 
+const BROAD_WORDS = new Set([
+  'summarize', 'summarise', 'summary', 'recap', 'overview', 'happened',
+  'main', 'points', 'key', 'catch', 'whole', 'entire', 'everything',
+]);
+
 function isBroadQuestion(question: string, queryTerms: string[]): boolean {
   if (queryTerms.length === 0) return true;
+  const specific = queryTerms.filter((term) => !BROAD_WORDS.has(term));
+  if (specific.length > 0) return false;
   return /\b(summar\w*|recap|overview|what happened|main points|key points|catch me up|whole meeting|entire meeting|everything)\b/i.test(question);
 }
 
