@@ -46,8 +46,9 @@ COPY apps/api/ ./apps/api/
 RUN cd packages/shared-types && npm run build
 
 # Generate Prisma client before compiling the API.
-# The generated client is included in apps/api/node_modules/@prisma/client.
-RUN cd apps/api && npx prisma generate
+# npm hoists @prisma/client to /app/node_modules. This install does not create
+# apps/api/node_modules, and the runner copy below fails if that path is missing.
+RUN cd apps/api && npx prisma generate && mkdir -p /app/apps/api/node_modules
 
 # Compile the API TypeScript to dist/.
 RUN cd apps/api && npm run build
@@ -78,8 +79,8 @@ COPY --from=builder --chown=node:node /app/apps/api/src/riva_asr.proto ./apps/ap
 # The schema is needed at runtime for prisma migrate deploy.
 COPY --from=builder --chown=node:node /app/apps/api/prisma ./apps/api/prisma
 
-# Copy node_modules from the npm workspace root and the API workspace.
-# Most dependencies are hoisted to the root; Prisma is pinned in the API workspace.
+# Dependencies are hoisted to /app/node_modules. The API folder is empty unless
+# a package could not be hoisted; Node still walks up to the root.
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/apps/api/node_modules ./apps/api/node_modules
 
