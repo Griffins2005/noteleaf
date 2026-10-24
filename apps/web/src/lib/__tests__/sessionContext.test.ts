@@ -38,13 +38,13 @@ describe('excerptTranscript', () => {
     expect(excerptTranscript('hello there')).toBe('hello there');
   });
 
-  it('keeps the opening and the closing of long transcripts', () => {
-    const t = `START ${'x'.repeat(6000)} END-MARKER`;
-    const excerpt = excerptTranscript(t);
-    expect(excerpt.length).toBeLessThanOrEqual(SUMMARIZE_EXCERPT_CHARS);
+  it('keeps the opening, middle, and end when the transcript exceeds the cap', () => {
+    const t = `START ${'word '.repeat(2000)}END-MARKER`;
+    const excerpt = excerptTranscript(t, 400);
     expect(excerpt.startsWith('START')).toBe(true);
     expect(excerpt).toContain('END-MARKER');
-    expect(excerpt).toContain('…');
+    expect(excerpt.match(/…/g)?.length).toBe(2);
+    expect(excerpt.length).toBeLessThanOrEqual(SUMMARIZE_EXCERPT_CHARS);
   });
 });
 
@@ -54,12 +54,15 @@ describe('selectSegmentsForSummarize', () => {
     expect(selectSegmentsForSummarize(segs)).toHaveLength(2);
   });
 
-  it('keeps opening and latest segments when over the cap', () => {
+  it('keeps the middle of a long meeting', () => {
     const segs = Array.from({ length: 80 }, (_, i) => segment(`seg-${i}`, i * 5));
-    const selected = selectSegmentsForSummarize(segs);
-    expect(selected).toHaveLength(SUMMARIZE_SEGMENT_LIMIT);
+    const selected = selectSegmentsForSummarize(segs, 10);
     expect(selected[0]?.text).toBe('seg-0');
     expect(selected.at(-1)?.text).toBe('seg-79');
+    const middle = Number(selected[Math.floor(selected.length / 2)]?.text.replace('seg-', ''));
+    expect(middle).toBeGreaterThan(30);
+    expect(middle).toBeLessThan(50);
+    expect(selected.length).toBeLessThanOrEqual(SUMMARIZE_SEGMENT_LIMIT);
   });
 });
 
@@ -78,8 +81,9 @@ describe('buildSummarizePayload', () => {
     );
 
     expect(payload.notes).toHaveLength(4);
-    expect(payload.transcriptExcerpt).toContain('navy theme');
-    expect(payload.transcriptSegments).toHaveLength(1);
+    expect(payload.notes[0]?.id).toBe('n1');
+    expect(payload.transcriptExcerpt).toBe('');
+    expect(payload.transcriptSegments?.[0]?.text).toContain('navy theme');
   });
 });
 

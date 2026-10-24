@@ -49,7 +49,8 @@ import { isMeaningfulSpeech, isPlaceholderRecap, isWeakRecapLine } from '@/lib/s
 import { track } from '@vercel/analytics';
 
 // Types
-import type { AiSummary, SummarizeRequest, TranscriptSegment, NoteType, ChatMessage } from '@noteleaf/shared-types';
+import type { AiSummary, SummarizeRequest, SummarizeResult, TranscriptSegment, NoteType, ChatMessage } from '@noteleaf/shared-types';
+import { applyNoteCorrections } from '@/lib/noteCorrections';
 import { cn } from '@/lib/cn';
 
 // ─── Main shell ───────────────────────────────────────────────────────────────
@@ -92,6 +93,7 @@ export function NotepadShell() {
     setActiveSessionTitle,
     setActiveSessionDuration,
     updateNote,
+    replaceActiveNotes,
     removeSession,
   } = useSessionStore();
 
@@ -259,11 +261,29 @@ export function NotepadShell() {
     try {
       const payload = buildSummarizePayload(notes, transcript, transcriptSegments);
 
-      const summary = await http.post<AiSummary>('/api/ai/summarize', {
+      const result = await http.post<SummarizeResult>('/api/ai/summarize', {
         sessionId,
         ...payload,
         sessionTitle: options?.sessionTitle ?? activeItem?.title,
       } satisfies SummarizeRequest);
+      const { noteCorrections, ...summary } = result;
+
+      if (
+        noteCorrections.length > 0 &&
+        sessionId === useSessionStore.getState().activeSessionId
+      ) {
+        const latest = useSessionStore.getState().activeNotes;
+        const corrected = applyNoteCorrections(latest, noteCorrections);
+        if (corrected !== latest) {
+          replaceActiveNotes(corrected);
+          try {
+            await sessionsApi.update(sessionId, { notes: corrected });
+          } catch (err) {
+            console.error('[Notes] Failed to save corrected categories:', err);
+            setNoteSaveError("Couldn't save the updated categories. Check your connection and try again.");
+          }
+        }
+      }
 
       setAiSummary(summary);
       setAiState('success');
@@ -291,7 +311,7 @@ export function NotepadShell() {
       }
       return undefined;
     }
-  }, [activeItem?.title, activeNotes, activeSessionId, activeTranscript, activeTranscriptSegments]);
+  }, [activeItem?.title, activeNotes, activeSessionId, activeTranscript, activeTranscriptSegments, replaceActiveNotes]);
 
   function generateTitle(opts: {
     summary?: AiSummary;

@@ -33,6 +33,7 @@ interface SessionActions {
   setElapsedSeconds: (seconds: number) => void;
   setActiveSessionDuration: (seconds: number) => void;
   updateNote: (noteId: string, content: string, type: Note['type']) => void;
+  replaceActiveNotes: (notes: Note[]) => void;
   clearActiveSessionNotes: () => void;
   removeSession: (sessionId: string) => void;
 }
@@ -156,6 +157,8 @@ export const useSessionStore = create<SessionState & SessionActions>()((set) => 
         };
       }),
     })),
+
+  replaceActiveNotes: (notes) => set({ activeNotes: notes }),
 
   clearActiveSessionNotes: () =>
     set((state) => ({

@@ -50,6 +50,8 @@ export type {
   AddNotesRequest,
   AddNotesResponse,
   SummarizeRequest,
+  SummarizeResult,
+  NoteTypeCorrection,
   SummarizeResponse,
   ClientToServerWsMessage,
   ServerToClientWsMessage,
