@@ -26,14 +26,14 @@ const summarizeSchema = z.object({
   notes: z.array(
     z.object({
       type: z.enum(['action', 'decision', 'insight', 'summary']),
-      content: z.string().min(1).max(2000),
+      content: z.string().min(1).max(100_000),
       capturedAt: z.string(),
     }),
   ).max(40).default([]),
   transcriptExcerpt: z.string().max(4000).default(''),
   transcriptSegments: z.array(
     z.object({
-      text: z.string().min(1).max(2000),
+      text: z.string().min(1).max(100_000),
       startOffsetSeconds: z.number().nonnegative(),
       endOffsetSeconds: z.number().nonnegative(),
     }),

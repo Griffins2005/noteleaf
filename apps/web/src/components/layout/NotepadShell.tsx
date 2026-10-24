@@ -106,6 +106,7 @@ export function NotepadShell() {
     recordingStatus,
     liveTranscript,
     elapsedSeconds,
+    coveredThroughSeconds,
     error: recordingError,
     sttWarning,
     startRecording,
@@ -799,6 +800,9 @@ export function NotepadShell() {
                           {activeNotes.length > 0
                             ? `${activeNotes.length} note${activeNotes.length !== 1 ? 's' : ''} captured`
                             : 'notes will appear as you speak'}
+                          {recordingStatus === 'recording' && coveredThroughSeconds > 0 && (
+                            <span className="ml-2">transcript through {formatMinuteSecond(coveredThroughSeconds)}</span>
+                          )}
                           {recordingStatus === 'recording' && autosaveStatus !== 'idle' && (
                             <span className="ml-2">{autosaveCopy(autosaveStatus)}</span>
                           )}
@@ -941,6 +945,7 @@ export function NotepadShell() {
             recordingError={recordingError}
             sttWarning={sttWarning}
             elapsedSeconds={elapsedSeconds}
+            coveredThroughSeconds={coveredThroughSeconds}
             noteCount={activeNotes.length}
             onStart={startRecording}
             onStop={handleStopRecording}
@@ -970,9 +975,17 @@ function MenuIcon() {
   );
 }
 
+function formatMinuteSecond(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const m = Math.floor(s / 60);
+  const ss = s % 60;
+  return `${m}:${String(ss).padStart(2, '0')}`;
+}
+
 function recordingErrorCopy(code: string | null): string {
   if (code === 'permission-denied') return 'Microphone access denied. Allow it in browser settings.';
-  if (code === 'not-supported') return 'Speech recognition requires Chrome or Edge.';
+  if (code === 'no-microphone') return 'No microphone was found.';
+  if (code === 'not-supported') return 'This browser can’t use the microphone.';
   if (code === 'session-create-failed') return 'Couldn’t start a session. Check your connection and try again.';
   return 'Speech recognition error. Please try again.';
 }
@@ -982,6 +995,7 @@ function RecordingDock({
   recordingError,
   sttWarning,
   elapsedSeconds,
+  coveredThroughSeconds,
   noteCount,
   onStart,
   onStop,
@@ -991,6 +1005,7 @@ function RecordingDock({
   recordingError: string | null;
   sttWarning: string | null;
   elapsedSeconds: number;
+  coveredThroughSeconds: number;
   noteCount: number;
   onStart: () => void;
   onStop: () => Promise<void>;
@@ -1024,6 +1039,9 @@ function RecordingDock({
             {noteCount > 0
               ? `${noteCount} note${noteCount !== 1 ? 's' : ''} captured`
               : 'notes will appear as you speak'}
+            {recordingStatus === 'recording' && coveredThroughSeconds > 0 && (
+              <span className="ml-2">transcript through {formatMinuteSecond(coveredThroughSeconds)}</span>
+            )}
             {recordingStatus === 'recording' && autosaveStatus !== 'idle' && (
               <span className="ml-2">{autosaveCopy(autosaveStatus)}</span>
             )}

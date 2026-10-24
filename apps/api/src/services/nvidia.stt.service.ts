@@ -58,6 +58,13 @@ import { fileURLToPath } from 'url';
 import type { WebSocket } from '@fastify/websocket';
 import type { ServerToClientWsMessage } from '@noteleaf/shared-types';
 import { logger } from '../logger.js';
+import {
+  boundsFromCapturedAudio,
+  normalizeWordClock,
+  pcmDurationMs,
+  readWordMs,
+  type TimedWord,
+} from './transcriptTiming.js';
 
 // ─── Proto loading ────────────────────────────────────────────────────────────
 
@@ -100,6 +107,10 @@ interface RivaStreamingResult {
   alternatives?: Array<{
     transcript?: string;
     confidence?:  number;
+    words?: Array<{
+      start_time?: number | string;
+      end_time?: number | string;
+    }>;
   }>;
   is_final?:  boolean;
   stability?: number;
@@ -114,6 +125,8 @@ export interface StartSessionOptions {
   userUuid:       string;
   sessionId:      string;
   languageCode:   string;
+  /** Session time, in ms, where this stream's audio begins. Zero on the first socket. */
+  audioOffsetMs:  number;
 }
 
 export interface SessionControllers {
@@ -239,7 +252,7 @@ export class NvidiaSttService {
    *          for the WebSocket proxy route to call.
    */
   async startSession(options: StartSessionOptions): Promise<SessionControllers> {
-    const { clientSocket, userUuid, sessionId, languageCode } = options;
+    const { clientSocket, userUuid, sessionId, languageCode, audioOffsetMs } = options;
 
     logger.info(
       { sessionId, userUuid, languageCode, mode: this.config.mode },
@@ -260,6 +273,8 @@ export class NvidiaSttService {
     const sessionStartMs  = Date.now();
     let isClosed          = false;
     let audioChunkCount   = 0;
+    let bytesReceived     = 0;
+    let lastFinalEndMs    = audioOffsetMs;
 
     // ── Outgoing event handlers ───────────────────────────────────────────
 
@@ -267,21 +282,38 @@ export class NvidiaSttService {
       if (!response.results?.length) return;
 
       for (const result of response.results) {
-        const transcript = result.alternatives?.[0]?.transcript ?? '';
+        const alternative = result.alternatives?.[0];
+        const transcript = alternative?.transcript ?? '';
         // Default to 1.0 — if NIM marks a segment is_final but omits confidence,
         // the proto3 default (0.0) would cause the note classifier to silently
         // discard it. A final result without confidence is still trustworthy.
-        const confidence = result.alternatives?.[0]?.confidence || 1.0;
+        const confidence = alternative?.confidence || 1.0;
 
         if (!transcript) continue;
 
+        const words: TimedWord[] = [];
+        for (const word of alternative?.words ?? []) {
+          const startMs = readWordMs(word.start_time);
+          const endMs = readWordMs(word.end_time);
+          if (startMs === null || endMs === null) continue;
+          words.push({ startMs, endMs });
+        }
+        const capturedMs = pcmDurationMs(bytesReceived);
+        const bounds = boundsFromCapturedAudio({
+          words: normalizeWordClock(words, capturedMs),
+          offsetMs: audioOffsetMs,
+          capturedMs,
+          lastFinalEndMs,
+        });
+
         if (result.is_final) {
+          lastFinalEndMs = Math.max(lastFinalEndMs, bounds.audioEnd);
           // Final transcript — immutable, safe to feed to the note classifier.
           sendToClient(clientSocket, {
             type:       'final_transcript',
             text:        transcript,
-            audioStart:  0,               // Riva doesn't provide chunk-level offsets
-            audioEnd:    Date.now() - sessionStartMs,
+            audioStart:  bounds.audioStart,
+            audioEnd:    bounds.audioEnd,
             confidence,
           });
 
@@ -294,7 +326,7 @@ export class NvidiaSttService {
           sendToClient(clientSocket, {
             type:       'partial_transcript',
             text:        transcript,
-            audioStart:  0,
+            audioStart:  bounds.audioStart,
           });
         }
       }
@@ -337,7 +369,7 @@ export class NvidiaSttService {
           language_code:              languageCode,
           max_alternatives:           1,
           enable_automatic_punctuation: true,         // Required for note classifier
-          enable_word_time_offsets:   false,          // Not used in v1
+          enable_word_time_offsets:   true,
           custom_configuration: {
             // 160ms chunk size — optimal latency/accuracy for meeting notes.
             // Options: "80", "160", "560", "1120" (milliseconds).
@@ -370,6 +402,7 @@ export class NvidiaSttService {
           logger.info({ sessionId, bytes: audioBuffer.length }, 'First audio chunk received from browser');
         }
         audioChunkCount++;
+        bytesReceived += audioBuffer.length;
 
         stream.write({ audio_content: audioBuffer });
       },

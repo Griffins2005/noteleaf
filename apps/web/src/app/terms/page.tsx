@@ -85,15 +85,15 @@ export default function TermsPage() {
         <Section title="Privacy Policy">
           <Rule
             heading="What we collect"
-            body="Your email, the notes and transcripts from your sessions, and any summaries you generate. Your audio never leaves your browser. We also collect cookieless page-view and performance metrics on the web app so we can see what is slow or broken."
+            body="Your email, the notes and transcripts from your sessions, and any summaries you generate. While you record, microphone audio is streamed to Noteleaf's speech service so it can be transcribed. Noteleaf does not store that audio. We also collect cookieless page-view and performance metrics on the web app so we can see what is slow or broken."
           />
           <Rule
             heading="What we never do"
-            body="We don't sell your data or share it with anyone. Your notes exist for you, not for us."
+            body="We don't sell your data. Audio is sent only so it can be transcribed, and we don't keep the recording. Your notes and transcripts stay in your account."
           />
           <Rule
             heading="Third parties"
-            body="We use cloud services to store your data and run the summaries. They only touch your data to make the service work, nothing else."
+            body="We use cloud services to store your account data, transcribe speech, and write summaries. They only touch that data to make the service work."
           />
           <Rule
             heading="Retention"

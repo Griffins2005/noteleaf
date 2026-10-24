@@ -5,6 +5,7 @@
   "env": {
     "API_INTERNAL_URL": "https://noteleaf-api.onrender.com",
     "NEXT_PUBLIC_APP_URL": "https://noteleaf.vercel.app",
-    "NEXT_PUBLIC_API_URL": "https://noteleaf.vercel.app"
+    "NEXT_PUBLIC_API_URL": "https://noteleaf.vercel.app",
+    "NEXT_PUBLIC_WS_URL": "wss://noteleaf-api.onrender.com/api/stt/stream"
   }
 }

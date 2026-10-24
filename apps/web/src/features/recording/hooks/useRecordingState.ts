@@ -1,6 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useSpeechRecognition } from './useSpeechRecognition';
+import { useAudioCapture } from './useAudioCapture';
+import { useSTTWebSocket } from './useSTTWebSocket';
 import { useNoteClassifier } from '@/features/notes/useNoteClassifier';
 import { useSessionStore } from '@/store/session.store';
 import { useUserStore } from '@/store/user.store';
@@ -8,6 +10,8 @@ import { useAuthStore } from '@/store/auth.store';
 import { sessionsApi } from '@/features/sessions/sessions.api';
 import { persistRecordingSnapshot } from '@/features/recording/persistRecordingSnapshot';
 import { isSameUtterance, joinUtterances, shouldStitchUtterances } from '@/lib/utteranceStitch';
+import { PcmTimeline } from '@/lib/pcmTimeline';
+import { resolveSpeechLanguage } from '@/lib/speechLanguages';
 import type { TranscriptSegment } from '@noteleaf/shared-types';
 
 export type AutosaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -20,7 +24,9 @@ export interface UseRecordingStateReturn {
   recordingStatus: RecordingStatus;
   liveTranscript:  string;
   elapsedSeconds:  number;
-  /** 'permission-denied' | 'not-supported' | null */
+  /** How far the kept transcript reaches, in seconds on the recording clock. */
+  coveredThroughSeconds: number;
+  /** 'permission-denied' | 'not-supported' | 'no-microphone' | null */
   error: string | null;
   /** Brief warning when STT reconnects after a network hiccup. */
   sttWarning: string | null;
@@ -39,6 +45,7 @@ export function useRecordingState(): UseRecordingStateReturn {
   const [sttWarning, setSttWarning]           = useState<string | null>(null);
 
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [coveredThroughSeconds, setCoveredThroughSeconds] = useState(0);
   const [autosaveStatus, setAutosaveStatus] = useState<AutosaveStatus>('idle');
   const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const elapsedRef = useRef(0);
@@ -55,6 +62,17 @@ export function useRecordingState(): UseRecordingStateReturn {
     sessionId: string;
   } | null>(null);
   const stitchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const modeRef = useRef<'stream' | 'browser' | null>(null);
+  const readyRef = useRef(false);
+  const hadReadyRef = useRef(false);
+  const timelineRef = useRef(new PcmTimeline());
+  const lastFinalTextRef = useRef('');
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const streamFailedRef = useRef(false);
+  const streamConfigRef = useRef({ sessionId: '', userUuid: '', languageCode: 'en-US' });
+  const showLiveRef = useRef(true);
 
   // ── Stores ─────────────────────────────────────────────────────────────
 
@@ -69,6 +87,7 @@ export function useRecordingState(): UseRecordingStateReturn {
 
   const { preferences } = useUserStore();
   const userId = useAuthStore((s) => s.user?.id ?? '');
+  showLiveRef.current = preferences.showLiveTranscript;
 
   // ── Note classifier ────────────────────────────────────────────────────
 
@@ -90,6 +109,7 @@ export function useRecordingState(): UseRecordingStateReturn {
     if (!pending || !trimmed) return;
 
     appendTranscript(trimmed);
+    setCoveredThroughSeconds((prev) => Math.max(prev, pending.endOffsetSeconds));
     if (pending.sessionId) {
       const segment: TranscriptSegment = {
         id: uuidv4(),
@@ -114,10 +134,12 @@ export function useRecordingState(): UseRecordingStateReturn {
 
   const { isSupported, start: startSTT, stop: stopSTT } = useSpeechRecognition({
     onPartialTranscript: (text) => {
-      if (preferences.showLiveTranscript) setLiveTranscript(text);
+      if (modeRef.current !== 'browser') return;
+      if (showLiveRef.current) setLiveTranscript(text);
     },
 
     onFinalTranscript: (text, startOffsetSeconds, endOffsetSeconds, confidence) => {
+      if (modeRef.current !== 'browser') return;
       const trimmed = text.trim();
       if (!trimmed) {
         setLiveTranscript('');
@@ -169,6 +191,7 @@ export function useRecordingState(): UseRecordingStateReturn {
     },
 
     onError: (code, message) => {
+      if (modeRef.current !== 'browser') return;
       console.error(`[STT] ${code}: ${message}`);
       setSttWarning(null);
       setError(code === 'permission-denied' ? 'permission-denied' : 'unknown');
@@ -177,11 +200,176 @@ export function useRecordingState(): UseRecordingStateReturn {
     },
 
     onRecoverableError: (code) => {
+      if (modeRef.current !== 'browser') return;
       console.warn(`[STT] Recoverable error (${code}) — restarting transcription`);
       setSttWarning('Transcription reconnecting… keep speaking.');
       setTimeout(() => setSttWarning(null), 5000);
     },
   });
+
+  const startSessionRef = useRef<(options: {
+    sessionId: string;
+    userUuid: string;
+    languageCode: string;
+    audioOffsetMs: number;
+  }) => void>(() => {});
+  const sendAudioRef = useRef<(chunk: string) => boolean>(() => false);
+  const stopSessionRef = useRef<() => Promise<void>>(async () => {});
+  const startBrowserSttRef = useRef(startSTT);
+  const stopBrowserSttRef = useRef(stopSTT);
+  const speechSupportedRef = useRef(isSupported);
+  startBrowserSttRef.current = startSTT;
+  stopBrowserSttRef.current = stopSTT;
+  speechSupportedRef.current = isSupported;
+
+  const clearStreamTimers = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    if (fallbackTimerRef.current) {
+      clearTimeout(fallbackTimerRef.current);
+      fallbackTimerRef.current = null;
+    }
+  }, []);
+
+  const flushUnsent = useCallback(() => {
+    if (!readyRef.current || modeRef.current !== 'stream') return;
+    for (const piece of timelineRef.current.unsentPieces()) {
+      if (!sendAudioRef.current(piece.pcmBase64)) return;
+      timelineRef.current.markSent(piece.endMs);
+    }
+  }, []);
+
+  const { startCapture, stopCapture, resumeCapture } = useAudioCapture({
+    onAudioChunk: (base64, byteLength) => {
+      if (modeRef.current !== 'stream') return;
+      timelineRef.current.push(base64, byteLength);
+      flushUnsent();
+    },
+  });
+
+  const commitStreamFinal = useCallback((
+    text: string,
+    startOffsetSeconds: number,
+    endOffsetSeconds: number,
+    confidence: number,
+  ) => {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      setLiveTranscript('');
+      return;
+    }
+    if (lastFinalTextRef.current.trim().toLowerCase() === trimmed.toLowerCase()) {
+      setLiveTranscript('');
+      timelineRef.current.markFinalized(endOffsetSeconds * 1000);
+      return;
+    }
+    lastFinalTextRef.current = trimmed;
+    setLiveTranscript('');
+    setCoveredThroughSeconds((prev) => Math.max(prev, endOffsetSeconds));
+    timelineRef.current.markFinalized(endOffsetSeconds * 1000);
+
+    const sessionId = useSessionStore.getState().activeSessionId ?? recordingSessionIdRef.current ?? '';
+    appendTranscript(trimmed);
+    if (sessionId) {
+      appendTranscriptSegment({
+        id: uuidv4(),
+        sessionId,
+        text: trimmed,
+        capturedAt: new Date().toISOString(),
+        startOffsetSeconds,
+        endOffsetSeconds,
+        confidence: confidence > 0 ? confidence : 1,
+      });
+    }
+    processTranscriptSegment(trimmed, endOffsetSeconds, confidence, sessionId || undefined);
+  }, [appendTranscript, appendTranscriptSegment, processTranscriptSegment]);
+
+  const fallbackToBrowser = useCallback(() => {
+    if (modeRef.current !== 'stream') return;
+    modeRef.current = 'browser';
+    readyRef.current = false;
+    clearStreamTimers();
+    void stopSessionRef.current();
+    stopCapture();
+    if (!speechSupportedRef.current) {
+      setSttWarning(null);
+      setError('not-supported');
+      setRecordingStatus('error');
+      stopTimer();
+      return;
+    }
+    setSttWarning('Speech service unavailable. Using the browser recognizer, so timestamps are approximate.');
+    startBrowserSttRef.current();
+  }, [clearStreamTimers, stopCapture]);
+
+  const scheduleReconnect = useCallback(() => {
+    if (reconnectTimerRef.current || modeRef.current !== 'stream' || !isRecordingRef.current) return;
+    const attempt = reconnectAttemptRef.current;
+    reconnectAttemptRef.current += 1;
+    const delay = Math.min(3000, Math.round(400 * 1.5 ** attempt));
+    setSttWarning('Transcription reconnecting… keep speaking.');
+    timelineRef.current.rewindSentToFinalized();
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      if (modeRef.current !== 'stream' || !isRecordingRef.current) return;
+      const cfg = streamConfigRef.current;
+      startSessionRef.current({
+        sessionId: cfg.sessionId,
+        userUuid: cfg.userUuid,
+        languageCode: cfg.languageCode,
+        audioOffsetMs: timelineRef.current.finalizedThroughMs,
+      });
+    }, delay);
+  }, []);
+
+  const { startSession, sendAudio, stopSession } = useSTTWebSocket({
+    onPartialTranscript: (text) => {
+      if (modeRef.current !== 'stream') return;
+      if (showLiveRef.current) setLiveTranscript(text);
+    },
+    onFinalTranscript: (text, startOffsetSeconds, endOffsetSeconds, confidence) => {
+      if (modeRef.current !== 'stream') return;
+      commitStreamFinal(text, startOffsetSeconds, endOffsetSeconds, confidence);
+    },
+    onSessionReady: () => {
+      if (modeRef.current !== 'stream') return;
+      readyRef.current = true;
+      hadReadyRef.current = true;
+      reconnectAttemptRef.current = 0;
+      clearStreamTimers();
+      setSttWarning(null);
+      flushUnsent();
+    },
+    onUnexpectedClose: () => {
+      if (modeRef.current !== 'stream') return;
+      readyRef.current = false;
+      if (!isRecordingRef.current) {
+        if (!hadReadyRef.current) streamFailedRef.current = true;
+        return;
+      }
+      if (!hadReadyRef.current) {
+        fallbackToBrowser();
+        return;
+      }
+      scheduleReconnect();
+    },
+    onError: (code, message) => {
+      if (modeRef.current !== 'stream') return;
+      console.warn(`[STT] ${code}: ${message}`);
+      if (!hadReadyRef.current) {
+        streamFailedRef.current = true;
+        if (isRecordingRef.current) fallbackToBrowser();
+        return;
+      }
+      readyRef.current = false;
+      scheduleReconnect();
+    },
+  });
+  startSessionRef.current = startSession;
+  sendAudioRef.current = sendAudio;
+  stopSessionRef.current = stopSession;
 
   // ── Timer ──────────────────────────────────────────────────────────────
 
@@ -292,7 +480,15 @@ export function useRecordingState(): UseRecordingStateReturn {
     };
 
     const onVisibility = () => {
-      if (document.visibilityState === 'hidden') saveOnLeave();
+      if (document.visibilityState === 'hidden') {
+        saveOnLeave();
+        if (modeRef.current === 'stream') {
+          setSttWarning('Keep this tab open. The microphone pauses in the background, and those minutes are not transcribed.');
+        }
+      } else {
+        void resumeCapture();
+        if (modeRef.current === 'stream' && readyRef.current) setSttWarning(null);
+      }
     };
 
     window.addEventListener('pagehide', saveOnLeave);
@@ -304,14 +500,15 @@ export function useRecordingState(): UseRecordingStateReturn {
       window.removeEventListener('pagehide', saveOnLeave);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [recordingStatus, flushPersist, schedulePersist, readSnapshot]);
+  }, [recordingStatus, flushPersist, schedulePersist, readSnapshot, resumeCapture]);
 
   // ── Start recording ────────────────────────────────────────────────────
 
   const startRecording = useCallback(async (): Promise<void> => {
     if (recordingStatus !== 'idle' && recordingStatus !== 'error') return;
 
-    if (!isSupported) {
+    const micSupported = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
+    if (!micSupported && !isSupported) {
       setError('not-supported');
       setRecordingStatus('error');
       return;
@@ -319,6 +516,7 @@ export function useRecordingState(): UseRecordingStateReturn {
 
     setError(null);
     setSttWarning(null);
+    setCoveredThroughSeconds(0);
     setRecordingStatus('connecting');
 
     let sessionId = activeSessionId;
@@ -336,9 +534,43 @@ export function useRecordingState(): UseRecordingStateReturn {
     }
 
     recordingSessionIdRef.current = sessionId;
-    startSTT();
+    modeRef.current = 'stream';
+    readyRef.current = false;
+    hadReadyRef.current = false;
+    reconnectAttemptRef.current = 0;
+    streamFailedRef.current = false;
+    lastFinalTextRef.current = '';
+    timelineRef.current.reset();
+    clearStreamTimers();
+    streamConfigRef.current = {
+      sessionId,
+      userUuid: userId,
+      languageCode: resolveSpeechLanguage(),
+    };
+    startSession({ ...streamConfigRef.current, audioOffsetMs: 0 });
+
+    const captureError = await startCapture();
+    if (captureError) {
+      modeRef.current = null;
+      isRecordingRef.current = false;
+      clearStreamTimers();
+      void stopSession();
+      setError(captureError === 'not-supported' ? 'not-supported' : captureError);
+      setRecordingStatus('error');
+      return;
+    }
+
+    isRecordingRef.current = true;
     setRecordingStatus('recording');
     startTimer();
+    if (streamFailedRef.current) {
+      fallbackToBrowser();
+    } else if (!hadReadyRef.current) {
+      fallbackTimerRef.current = setTimeout(() => {
+        fallbackTimerRef.current = null;
+        if (modeRef.current === 'stream' && !hadReadyRef.current) fallbackToBrowser();
+      }, 8000);
+    }
     setAutosaveStatus('idle');
     void persistRecordingSnapshot({
       sessionId,
@@ -356,8 +588,12 @@ export function useRecordingState(): UseRecordingStateReturn {
     removeSession,
     isSupported,
     recordingStatus,
-    startSTT,
     userId,
+    startSession,
+    startCapture,
+    stopSession,
+    clearStreamTimers,
+    fallbackToBrowser,
   ]);
 
   // ── Stop recording ─────────────────────────────────────────────────────
@@ -369,9 +605,19 @@ export function useRecordingState(): UseRecordingStateReturn {
     setLiveTranscript('');
     isRecordingRef.current = false;
     stopTimer();
+    clearStreamTimers();
 
-    await stopSTT();
-    commitStitchedUtterance();
+    if (modeRef.current === 'browser') {
+      await stopSTT();
+      commitStitchedUtterance();
+    } else {
+      stopCapture();
+      flushUnsent();
+      await stopSession();
+      timelineRef.current.reset();
+    }
+    modeRef.current = null;
+    readyRef.current = false;
 
     persistQueuedRef.current = false;
     if (persistTimerRef.current) {
@@ -416,12 +662,13 @@ export function useRecordingState(): UseRecordingStateReturn {
 
     recordingSessionIdRef.current = null;
     setRecordingStatus('idle');
-  }, [recordingStatus, stopSTT, commitStitchedUtterance]);
+  }, [recordingStatus, stopSTT, commitStitchedUtterance, clearStreamTimers, stopCapture, flushUnsent, stopSession]);
 
   return {
     recordingStatus,
     liveTranscript,
     elapsedSeconds,
+    coveredThroughSeconds,
     error,
     sttWarning,
     startRecording,

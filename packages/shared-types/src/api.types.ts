@@ -96,7 +96,14 @@ export type SummarizeResponse = ApiResponse<AiSummary>;
  * The proxy forwards audio chunks to NVIDIA NIM via gRPC.
  */
 export type ClientToServerWsMessage =
-  | { type: 'session_start'; sessionId: string; userUuid: string; languageCode: string }
+  | {
+      type: 'session_start';
+      sessionId: string;
+      userUuid: string;
+      languageCode: string;
+      /** Milliseconds of audio already finalized before this socket. Zero on the first connection. */
+      audioOffsetMs?: number;
+    }
   | { type: 'audio_chunk'; data: string }   // base64-encoded PCM audio
   | { type: 'session_end' };
 

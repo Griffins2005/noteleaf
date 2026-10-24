@@ -34,6 +34,7 @@ const sessionStartSchema = z.object({
   sessionId: z.string().uuid(),
   userUuid: z.string().uuid(),
   languageCode: z.string().min(2).max(10).default('en-US'),
+  audioOffsetMs: z.number().nonnegative().optional().default(0),
 });
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
@@ -97,7 +98,7 @@ export async function sttStreamRoute(fastify: FastifyInstance): Promise<void> {
               return;
             }
 
-            const { sessionId, userUuid, languageCode } = parsed.data;
+            const { sessionId, userUuid, languageCode, audioOffsetMs } = parsed.data;
 
             try {
               const controllers = await nvidiaSttService.startSession({
@@ -105,6 +106,7 @@ export async function sttStreamRoute(fastify: FastifyInstance): Promise<void> {
                 userUuid,
                 sessionId,
                 languageCode,
+                audioOffsetMs,
               });
 
               sendAudioChunk = controllers.sendAudioChunk;
